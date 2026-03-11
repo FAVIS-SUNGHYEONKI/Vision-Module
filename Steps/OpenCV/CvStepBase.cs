@@ -1,3 +1,4 @@
+using System;
 using Vision.Converters;
 
 namespace Vision.Steps.OpenCV
@@ -17,7 +18,12 @@ namespace Vision.Steps.OpenCV
         {
             // VpImage → CvImage 자동 변환 (CvImage가 없을 때만)
             if (context.MatImage == null && context.CogImage != null)
+            {
                 context.MatImage = ImageConverter.ToMat(context.CogImage);
+                // 변환 원본 CogImage는 더 이상 필요 없으므로 해제
+                (context.CogImage as IDisposable)?.Dispose();
+                context.CogImage = null;
+            }
 
             ExecuteCore(context);
         }

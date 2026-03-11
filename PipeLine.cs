@@ -13,6 +13,12 @@ namespace Vision
     {
         private readonly List<IVisionStep> _steps = new List<IVisionStep>();
 
+        /// <summary>
+        /// true이면 파이프라인 완료 후 VisionContext의 이미지(MatImage/CogImage)를 자동으로 해제합니다.
+        /// Data, Errors 등 결과 데이터는 유지됩니다.
+        /// </summary>
+        public bool AutoDisposeImages { get; set; } = false;
+
         /// <summary>스텝 시작 시 발생. (스텝 이름, 현재 번호, 전체 수)</summary>
         public event Action<string, int, int> OnStepStarted;
 
@@ -65,6 +71,8 @@ namespace Vision
             finally
             {
                 OnPipelineFinished?.Invoke(context);
+                if (AutoDisposeImages)
+                    context.Dispose();
             }
 
             return context;

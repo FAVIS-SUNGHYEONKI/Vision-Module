@@ -1,0 +1,57 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build (Debug|AnyCPU)",
+            "type": "shell",
+            "command": "msbuild",
+            "args": [
+                "${workspaceFolder}/Vision.sln",
+                "/p:Configuration=Debug",
+                "/p:Platform=AnyCPU",
+                "/verbosity:minimal",
+                "/nologo"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": "$msCompile",
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "build (Debug|x64)",
+            "type": "shell",
+            "command": "msbuild",
+            "args": [
+                "${workspaceFolder}/Vision.sln",
+                "/p:Configuration=Debug",
+                "/p:Platform=x64",
+                "/verbosity:minimal",
+                "/nologo"
+            ],
+            "group": "build",
+            "problemMatcher": "$msCompile",
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "clean",
+            "type": "shell",
+            "command": "msbuild",
+            "args": [
+                "${workspaceFolder}/Vision.sln",
+                "/t:Clean",
+                "/verbosity:minimal",
+                "/nologo"
+            ],
+            "group": "build",
+            "problemMatcher": "$msCompile"
+        }
+    ]
+}

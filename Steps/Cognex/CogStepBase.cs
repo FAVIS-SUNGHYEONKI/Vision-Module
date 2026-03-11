@@ -17,7 +17,12 @@ namespace Vision.Steps.VisionPro
         {
             // CvImage → VpImage 자동 변환 (VpImage가 없을 때만)
             if (context.CogImage == null && context.MatImage != null)
+            {
                 context.CogImage = ImageConverter.ToCogImage8Grey(context.MatImage);
+                // 변환 원본 MatImage는 더 이상 필요 없으므로 해제
+                context.MatImage.Dispose();
+                context.MatImage = null;
+            }
 
             ExecuteCore(context);
         }

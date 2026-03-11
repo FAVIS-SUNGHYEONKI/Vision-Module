@@ -34,7 +34,9 @@ namespace Vision
         public void Dispose()
         {
             MatImage?.Dispose();
+            MatImage = null;
             (CogImage as IDisposable)?.Dispose();
+            CogImage = null;
         }
     }
 

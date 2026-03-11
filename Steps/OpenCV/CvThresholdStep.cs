@@ -1,3 +1,4 @@
+using System;
 using OpenCvSharp;
 
 namespace Vision.Steps.OpenCV
@@ -32,7 +33,9 @@ namespace Vision.Steps.OpenCV
 
             context.MatImage.Dispose();
             context.MatImage = result;
-            context.CogImage = null; // CvImage 교체 후 VpImage는 동기화 필요
+            // CvImage 교체 후 VpImage는 무효 → dispose 후 null
+            (context.CogImage as IDisposable)?.Dispose();
+            context.CogImage = null;
         }
     }
 }
