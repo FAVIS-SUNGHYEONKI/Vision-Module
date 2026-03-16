@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Attach to Process (.NET Framework)",
+            "type": "clr",
+            "request": "attach",
+            "preLaunchTask": "build (Debug|AnyCPU)"
+        },
+        {
+            "name": "Attach to Process (.NET Framework x64)",
+            "type": "clr",
+            "request": "attach",
+            "preLaunchTask": "build (Debug|x64)"
+        }
+    ]
+}
