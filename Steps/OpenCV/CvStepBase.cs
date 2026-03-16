@@ -9,10 +9,14 @@ namespace Vision.Steps.OpenCV
     /// VpImage만 있을 경우 자동으로 Mat(CvImage)으로 변환한 뒤 ExecuteCore를 호출합니다.
     /// 이를 통해 VisionPro 스텝 다음에 바로 OpenCV 스텝을 연결할 수 있습니다.
     /// </summary>
-    public abstract class CvStepBase : IVisionStep
+    public abstract class CvStepBase : IVisionStep, IImageTypedStep
     {
         public abstract string Name { get; }
         public virtual bool ContinueOnFailure => false;
+
+        // OpenCV 스텝 기본: 어떤 이미지도 허용 (내부 자동 변환), 결과는 Grey
+        public virtual ImageType RequiredInputType  => ImageType.Any;
+        public virtual ImageType ProducedOutputType => ImageType.Grey;
 
         public void Execute(VisionContext context)
         {

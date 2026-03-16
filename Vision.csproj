@@ -66,6 +66,10 @@
       <SpecificVersion>False</SpecificVersion>
       <HintPath>..\..\..\..\..\Program Files\Cognex\VisionPro\ReferencedAssemblies\Cognex.VisionPro.Core.dll</HintPath>
     </Reference>
+    <Reference Include="Cognex.VisionPro.ImageProcessing, Version=71.2.0.0, Culture=neutral, PublicKeyToken=ef0f902af9dee505, processorArchitecture=AMD64">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\..\..\..\..\Program Files\Cognex\VisionPro\ReferencedAssemblies\Cognex.VisionPro.ImageProcessing.dll</HintPath>
+    </Reference>
     <Reference Include="Cognex.VisionPro.Display.Controls, Version=71.2.0.0, Culture=neutral, PublicKeyToken=ef0f902af9dee505, processorArchitecture=AMD64">
       <SpecificVersion>False</SpecificVersion>
       <HintPath>..\..\..\..\..\Program Files\Cognex\VisionPro\ReferencedAssemblies\Cognex.VisionPro.Display.Controls.dll</HintPath>
@@ -108,16 +112,25 @@
   <ItemGroup>
     <Compile Include="Core.cs" />
     <Compile Include="PipeLine.cs" />
+    <Compile Include="PipelineConfig.cs" />
+    <Compile Include="PipelineManager.cs" />
     <Compile Include="Converters\ImageConverter.cs" />
+    <Compile Include="Steps\Cognex\CogConvertGray.cs" />
     <Compile Include="Steps\OpenCV\CvStepBase.cs" />
     <Compile Include="Steps\OpenCV\CvThresholdStep.cs" />
     <Compile Include="Steps\Cognex\CogStepBase.cs" />
     <Compile Include="Steps\Cognex\CogCaliperStep.cs" />
+    <Compile Include="Steps\Cognex\CogBlobStep.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />
     <None Include="packages.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="OpenCvSharpExtern.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

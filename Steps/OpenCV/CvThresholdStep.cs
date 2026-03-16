@@ -1,24 +1,16 @@
-using System;
+using System.Globalization;
+using System.Xml.Linq;
 using OpenCvSharp;
 
 namespace Vision.Steps.OpenCV
 {
-    /// <summary>
-    /// OpenCV Threshold 스텝.
-    ///
-    /// context.CvImage에 이진화를 적용하고 결과로 교체합니다.
-    /// CvImage가 변경되면 VpImage는 무효가 되므로 null로 초기화합니다.
-    ///
-    /// 사용 예:
-    ///   pipeline.AddStep(new CvThresholdStep { ThresholdValue = 128 });
-    /// </summary>
-    public class CvThresholdStep : CvStepBase
+    public class CvThresholdStep : CvStepBase, IStepSerializable
     {
         public override string Name => "OpenCV.Threshold";
 
-        public double ThresholdValue { get; set; } = 128.0;
-        public double MaxValue       { get; set; } = 255.0;
-        public ThresholdTypes Type   { get; set; } = ThresholdTypes.Binary;
+        public double         ThresholdValue { get; set; } = 128.0;
+        public double         MaxValue       { get; set; } = 255.0;
+        public ThresholdTypes Type           { get; set; } = ThresholdTypes.Binary;
 
         protected override void ExecuteCore(VisionContext context)
         {
@@ -33,9 +25,45 @@ namespace Vision.Steps.OpenCV
 
             context.MatImage.Dispose();
             context.MatImage = result;
-            // CvImage 교체 후 VpImage는 무효 → dispose 후 null
-            (context.CogImage as IDisposable)?.Dispose();
+            (context.CogImage as System.IDisposable)?.Dispose();
             context.CogImage = null;
+        }
+
+        // ── IStepSerializable ────────────────────────────────────────────
+
+        public void SaveParams(XElement el)
+        {
+            el.Add(
+                Xd("ThresholdValue", ThresholdValue),
+                Xd("MaxValue",       MaxValue),
+                Xi("Type",           (int)Type));
+        }
+
+        public void LoadParams(XElement el)
+        {
+            ThresholdValue = Rd(el, "ThresholdValue", 128.0);
+            MaxValue       = Rd(el, "MaxValue",       255.0);
+            Type           = (ThresholdTypes)Ri(el, "Type", (int)ThresholdTypes.Binary);
+        }
+
+        // ── XML 헬퍼 ─────────────────────────────────────────────────────
+
+        private static XElement Xd(string n, double v) =>
+            new XElement(n, v.ToString("R", CultureInfo.InvariantCulture));
+
+        private static XElement Xi(string n, int v) => new XElement(n, v);
+
+        private static double Rd(XElement el, string n, double def)
+        {
+            var s = el.Element(n)?.Value;
+            return s != null && double.TryParse(s, System.Globalization.NumberStyles.Any,
+                CultureInfo.InvariantCulture, out var v) ? v : def;
+        }
+
+        private static int Ri(XElement el, string n, int def)
+        {
+            var s = el.Element(n)?.Value;
+            return s != null && int.TryParse(s, out var v) ? v : def;
         }
     }
 }

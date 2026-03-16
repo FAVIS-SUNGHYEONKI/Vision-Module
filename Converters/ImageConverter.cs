@@ -2,6 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using Cognex.VisionPro;
 using OpenCvSharp;
+using OpenCvSharp.Extensions;
 
 namespace Vision.Converters
 {
@@ -87,6 +88,81 @@ namespace Vision.Converters
             using (converted)
                 return ToMat(converted);
         }
+
+        // ─────────────────────────────────────────────
+        // ICogImage → 컬러 Mat (BGR 3채널)
+        // ─────────────────────────────────────────────
+
+        /// <summary>
+        /// ICogImage → OpenCV Mat.
+        /// - CogImage8Grey          : CV_8UC1 (1채널 그레이)
+        /// - CogImage24PlanarColor  : CV_8UC3 (BGR 3채널)
+        /// - 기타                   : 강도 변환(그레이스케일) 후 CV_8UC1
+        ///
+        /// ※ CogImage24PlanarColor 픽셀 메모리 레이아웃 가정
+        ///   Scan0 → [R plane][G plane][B plane] (각 plane = Height × RowStride bytes)
+        ///   실제 VisionPro 버전에 따라 Scan0 / RowStride 프로퍼티 이름이 다를 수 있습니다.
+        /// </summary>
+        public static Mat ToColorMat(ICogImage cogImage)
+        {
+            if (cogImage == null)
+                throw new ArgumentNullException(nameof(cogImage));
+
+            if (cogImage is CogImage8Grey)
+                return ToMat(cogImage);  // 이미 그레이
+
+            //if (cogImage is CogImage24PlanarColor colorImg)
+            //    return ExtractColorMat(colorImg);
+
+            return ToMat(cogImage);  // 그 외: 그레이스케일 fallback
+        }
+
+
+
+        //private static Mat ExtractColorMat(CogImage24PlanarColor colorImg)
+        //{
+        //    int w = colorImg.Width;
+        //    int h = colorImg.Height;
+        //    var mat = new Mat(h, w, MatType.CV_8UC3);
+
+        //    CogImage24PlanarColor pixMem = null;
+        //    try
+        //    {
+        //        pixMem = colorImg.Get24PlanarColorPixelMemory(
+        //            CogImageDataModeConstants.Read, 0, 0, w, h);
+
+        //        // Planar 레이아웃: [R plane h*rowStride][G plane h*rowStride][B plane h*rowStride]
+        //        int rowStride   = pixMem.RowStride;
+        //        int planeStride = h * rowStride;  // 한 색상 플레인의 전체 바이트 수
+
+        //        var rowR   = new byte[w];
+        //        var rowG   = new byte[w];
+        //        var rowB   = new byte[w];
+        //        var rowBGR = new byte[w * 3];
+
+        //        for (int y = 0; y < h; y++)
+        //        {
+        //            Marshal.Copy(pixMem.Scan0 + 0 * planeStride + y * rowStride, rowR, 0, w);
+        //            Marshal.Copy(pixMem.Scan0 + 1 * planeStride + y * rowStride, rowG, 0, w);
+        //            Marshal.Copy(pixMem.Scan0 + 2 * planeStride + y * rowStride, rowB, 0, w);
+
+        //            for (int x = 0; x < w; x++)
+        //            {
+        //                rowBGR[x * 3 + 0] = rowB[x];  // B
+        //                rowBGR[x * 3 + 1] = rowG[x];  // G
+        //                rowBGR[x * 3 + 2] = rowR[x];  // R
+        //            }
+        //            Marshal.Copy(rowBGR, 0, mat.Ptr(y), w * 3);
+        //        }
+        //    }
+        //    finally
+        //    {
+        //        if (pixMem != null)
+        //            colorImg.ReleasePixelMemory(pixMem);
+        //    }
+
+        //    return mat;
+        //}
 
         // ─────────────────────────────────────────────
         // 내부 헬퍼
