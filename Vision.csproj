@@ -102,6 +102,8 @@
     <Reference Include="System.Runtime.CompilerServices.Unsafe, Version=6.0.3.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a, processorArchitecture=MSIL">
       <HintPath>packages\System.Runtime.CompilerServices.Unsafe.6.1.2\lib\net462\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
     </Reference>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
     <Reference Include="Microsoft.CSharp" />
@@ -121,6 +123,26 @@
     <Compile Include="Steps\Cognex\CogStepBase.cs" />
     <Compile Include="Steps\Cognex\CogCaliperStep.cs" />
     <Compile Include="Steps\Cognex\CogBlobStep.cs" />
+    <Compile Include="Steps\Cognex\CogWeightedRGBStep.cs" />
+    <Compile Include="Steps\Cognex\CaliperDistanceResult.cs" />
+    <Compile Include="Steps\Cognex\CogCaliperDistanceStep.cs" />
+    <Compile Include="Results\VisionResult.cs" />
+    <Compile Include="PipelineController.cs" />
+    <Compile Include="GUI\IStepParamPanel.cs" />
+    <Compile Include="GUI\StepDescriptor.cs" />
+    <Compile Include="GUI\DisplayHelper.cs" />
+    <Compile Include="GUI\Pipelines\CogCaliperParamPanel.cs" />
+    <Compile Include="GUI\Pipelines\CogBlobParamPanel.cs" />
+    <Compile Include="GUI\Pipelines\CogConvertGrayParamPanel.cs" />
+    <Compile Include="GUI\Pipelines\CvThresholdParamPanel.cs" />
+    <Compile Include="GUI\Pipelines\CogCaliperDistanceParamPanel.cs" />
+    <Compile Include="GUI\Pipelines\StepParamPanelFactory.cs" />
+    <Compile Include="GUI\PipelineEditorForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="GUI\PipelineEditorForm.Designer.cs">
+      <DependentUpon>PipelineEditorForm.cs</DependentUpon>
+    </Compile>
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>

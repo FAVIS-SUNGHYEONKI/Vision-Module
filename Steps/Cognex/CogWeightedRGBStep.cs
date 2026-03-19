@@ -23,18 +23,29 @@ namespace Vision.Steps.VisionPro
     /// </summary>
     public class CogWeightedRGBStep : CogStepBase, IStepSerializable
     {
+        /// <summary>스텝 고유 이름.</summary>
         public override string Name => "VisionPro.WeightedRGB";
 
+        /// <summary>컬러 이미지(CogImage24PlanarColor)만 입력으로 받습니다.</summary>
         public override ImageType RequiredInputType  => ImageType.Color;
+
+        /// <summary>가중 합산 후 그레이스케일 이미지를 출력합니다.</summary>
         public override ImageType ProducedOutputType => ImageType.Grey;
 
+        /// <summary>적색 채널 가중치 (0.0~1.0). 기본값 1/3.</summary>
         public double RedWeight   { get; set; } = 1.0 / 3.0;
+
+        /// <summary>녹색 채널 가중치 (0.0~1.0). 기본값 1/3.</summary>
         public double GreenWeight { get; set; } = 1.0 / 3.0;
+
+        /// <summary>청색 채널 가중치 (0.0~1.0). 기본값 1/3.</summary>
         public double BlueWeight  { get; set; } = 1.0 / 3.0;
 
+        // 채널별 가중 합산에 사용하는 CogImageArithmeticTool 인스턴스 (Add 연산)
         private readonly CogImageArithmeticTool _addRG    = new CogImageArithmeticTool();
         private readonly CogImageArithmeticTool _addFinal = new CogImageArithmeticTool();
 
+        /// <summary>Add 연산자로 CogImageArithmeticTool 2개를 초기화합니다.</summary>
         public CogWeightedRGBStep()
         {
             _addRG.RunParams.Operator    = CogImageArithmeticConstants.Add;
@@ -43,6 +54,7 @@ namespace Vision.Steps.VisionPro
 
         // ── IStepSerializable ────────────────────────────────────────────
 
+        /// <summary>RedWeight, GreenWeight, BlueWeight를 XML에 저장합니다.</summary>
         public void SaveParams(XElement el)
         {
             el.Add(
@@ -51,6 +63,7 @@ namespace Vision.Steps.VisionPro
                 new XElement("BlueWeight",  BlueWeight.ToString("R",  CultureInfo.InvariantCulture)));
         }
 
+        /// <summary>XML 요소에서 RedWeight, GreenWeight, BlueWeight를 복원합니다.</summary>
         public void LoadParams(XElement el)
         {
             RedWeight   = Rd(el, "RedWeight",   1.0 / 3.0);
@@ -67,6 +80,10 @@ namespace Vision.Steps.VisionPro
 
         // ── ExecuteCore ──────────────────────────────────────────────────
 
+        /// <summary>
+        /// 컬러 이미지의 R/G/B 채널에 각 가중치를 적용하여 합산한 그레이스케일 이미지를 생성합니다.
+        /// 입력이 CogImage24PlanarColor가 아니면 오류를 기록합니다.
+        /// </summary>
         protected override void ExecuteCore(VisionContext context)
         {
             var colorImg = context.CogImage as CogImage24PlanarColor;
