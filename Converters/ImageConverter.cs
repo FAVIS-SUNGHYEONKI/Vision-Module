@@ -34,7 +34,7 @@ namespace Vision.Converters
             {
                 var cogImg = new CogImage8Grey();
                 cogImg.Allocate(gray.Width, gray.Height);
-
+                
                 ICogImage8PixelMemory pixMem = null;
                 try
                 {
@@ -80,7 +80,8 @@ namespace Vision.Converters
                 return ToMat(grey8);
 
             // 다른 포맷은 8Grey로 변환 후 처리
-            var converted = CogImageConvert.GetIntensityImage(cogImage, 0, 0, cogImage.Width, cogImage.Height) as CogImage8Grey;
+            var converted = CogImageConvert.GetIntensityImage(cogImage, 0, 0, cogImage.Width, cogImage.Height);
+
             if (converted == null)
                 throw new NotSupportedException(
                     $"ICogImage 타입 '{cogImage.GetType().Name}'은 지원하지 않습니다.");
@@ -117,62 +118,21 @@ namespace Vision.Converters
             return ToMat(cogImage);  // 그 외: 그레이스케일 fallback
         }
 
-
-
-        //private static Mat ExtractColorMat(CogImage24PlanarColor colorImg)
-        //{
-        //    int w = colorImg.Width;
-        //    int h = colorImg.Height;
-        //    var mat = new Mat(h, w, MatType.CV_8UC3);
-
-        //    CogImage24PlanarColor pixMem = null;
-        //    try
-        //    {
-        //        pixMem = colorImg.Get24PlanarColorPixelMemory(
-        //            CogImageDataModeConstants.Read, 0, 0, w, h);
-
-        //        // Planar 레이아웃: [R plane h*rowStride][G plane h*rowStride][B plane h*rowStride]
-        //        int rowStride   = pixMem.RowStride;
-        //        int planeStride = h * rowStride;  // 한 색상 플레인의 전체 바이트 수
-
-        //        var rowR   = new byte[w];
-        //        var rowG   = new byte[w];
-        //        var rowB   = new byte[w];
-        //        var rowBGR = new byte[w * 3];
-
-        //        for (int y = 0; y < h; y++)
-        //        {
-        //            Marshal.Copy(pixMem.Scan0 + 0 * planeStride + y * rowStride, rowR, 0, w);
-        //            Marshal.Copy(pixMem.Scan0 + 1 * planeStride + y * rowStride, rowG, 0, w);
-        //            Marshal.Copy(pixMem.Scan0 + 2 * planeStride + y * rowStride, rowB, 0, w);
-
-        //            for (int x = 0; x < w; x++)
-        //            {
-        //                rowBGR[x * 3 + 0] = rowB[x];  // B
-        //                rowBGR[x * 3 + 1] = rowG[x];  // G
-        //                rowBGR[x * 3 + 2] = rowR[x];  // R
-        //            }
-        //            Marshal.Copy(rowBGR, 0, mat.Ptr(y), w * 3);
-        //        }
-        //    }
-        //    finally
-        //    {
-        //        if (pixMem != null)
-        //            colorImg.ReleasePixelMemory(pixMem);
-        //    }
-
-        //    return mat;
-        //}
-
         // ─────────────────────────────────────────────
         // 내부 헬퍼
         // ─────────────────────────────────────────────
 
+        /// <summary>
+        /// CogImage8Grey → OpenCV Mat (CV_8UC1) 내부 변환.
+        /// 픽셀 메모리(ICogImage8PixelMemory)를 통해 행 단위로 복사합니다.
+        /// Marshal.Copy를 사용하여 관리/비관리 메모리 경계를 넘어 데이터를 복사합니다.
+        /// </summary>
         private static Mat ToMat(CogImage8Grey cogImg)
         {
             var mat = new Mat(cogImg.Height, cogImg.Width, MatType.CV_8UC1);
 
             ICogImage8PixelMemory pixMem = null;
+
             try
             {
                 pixMem = cogImg.Get8GreyPixelMemory(
