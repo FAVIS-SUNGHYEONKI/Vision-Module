@@ -20,6 +20,7 @@ namespace Vision.UI
                 case "VisionPro.Blob":            return new CogBlobParamPanel();
                 case "VisionPro.ConvertGray":     return new CogConvertGrayParamPanel();
                 case "VisionPro.CaliperDistance": return new CogCaliperDistanceParamPanel();
+                case "OpenCV.Threshold":          return new CvThresholdParamPanel();
                 default:                          return null;
             }
         }

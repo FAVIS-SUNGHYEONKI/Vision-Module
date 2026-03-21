@@ -9,8 +9,8 @@ namespace Vision.Converters
     /// <summary>
     /// OpenCV Mat ↔ Cognex ICogImage 변환 유틸리티.
     ///
-    /// 혼합 파이프라인에서 CvStepBase / VpStepBase가 내부적으로 사용합니다.
-    /// 직접 호출도 가능합니다.
+    /// 혼합 파이프라인에서 CvStepBase / VpStepBase가 내부적으로 사용한다.
+    /// 직접 호출도 가능하다.
     /// </summary>
     public static class ImageConverter
     {
@@ -19,22 +19,26 @@ namespace Vision.Converters
         // ─────────────────────────────────────────────
 
         /// <summary>
-        /// OpenCV Mat(8UC1 또는 컬러) → CogImage8Grey.
-        /// 컬러 이미지는 그레이스케일로 변환 후 복사합니다.
+        /// OpenCV Mat(그레이 또는 컬러) → CogImage8Grey.
+        /// 컬러 이미지는 그레이스케일로 변환 후 복사한다.
         /// </summary>
         public static CogImage8Grey ToCogImage8Grey(Mat mat)
         {
             if (mat == null || mat.Empty())
                 throw new ArgumentNullException(nameof(mat));
 
+            // 컬러 Mat은 그레이로 변환. 이미 그레이이면 그대로 사용한다.
             bool converted = mat.Channels() > 1;
             Mat gray = converted ? mat.CvtColor(ColorConversionCodes.BGR2GRAY) : mat;
-
+           
             try
             {
-                var cogImg = new CogImage8Grey();
-                cogImg.Allocate(gray.Width, gray.Height);
                 
+                var cogImg = new CogImage8Grey();
+                // Mat 이미지의 가로x세로 크기의 내부 픽셀 버퍼를 할당한다.
+                // 이때 VisionPro는 내부적으로 메모리를 할당하여 관리한다.
+                cogImg.Allocate(gray.Width, gray.Height);
+
                 ICogImage8PixelMemory pixMem = null;
                 try
                 {
@@ -50,8 +54,7 @@ namespace Vision.Converters
                 }
                 finally
                 {
-                    if (pixMem != null)
-                        cogImg.Dispose();
+                    pixMem?.Dispose();
                 }
 
                 return cogImg;
@@ -68,7 +71,7 @@ namespace Vision.Converters
 
         /// <summary>
         /// ICogImage → OpenCV Mat (CV_8UC1).
-        /// CogImage8Grey 이외의 포맷은 VisionPro 내부 변환을 거칩니다.
+        /// CogImage8Grey 이외의 포맷은 VisionPro 내부 변환을 거친다.
         /// </summary>
         public static Mat ToMat(ICogImage cogImage)
         {
@@ -91,41 +94,13 @@ namespace Vision.Converters
         }
 
         // ─────────────────────────────────────────────
-        // ICogImage → 컬러 Mat (BGR 3채널)
-        // ─────────────────────────────────────────────
-
-        /// <summary>
-        /// ICogImage → OpenCV Mat.
-        /// - CogImage8Grey          : CV_8UC1 (1채널 그레이)
-        /// - CogImage24PlanarColor  : CV_8UC3 (BGR 3채널)
-        /// - 기타                   : 강도 변환(그레이스케일) 후 CV_8UC1
-        ///
-        /// ※ CogImage24PlanarColor 픽셀 메모리 레이아웃 가정
-        ///   Scan0 → [R plane][G plane][B plane] (각 plane = Height × RowStride bytes)
-        ///   실제 VisionPro 버전에 따라 Scan0 / RowStride 프로퍼티 이름이 다를 수 있습니다.
-        /// </summary>
-        public static Mat ToColorMat(ICogImage cogImage)
-        {
-            if (cogImage == null)
-                throw new ArgumentNullException(nameof(cogImage));
-
-            if (cogImage is CogImage8Grey)
-                return ToMat(cogImage);  // 이미 그레이
-
-            //if (cogImage is CogImage24PlanarColor colorImg)
-            //    return ExtractColorMat(colorImg);
-
-            return ToMat(cogImage);  // 그 외: 그레이스케일 fallback
-        }
-
-        // ─────────────────────────────────────────────
         // 내부 헬퍼
         // ─────────────────────────────────────────────
 
         /// <summary>
         /// CogImage8Grey → OpenCV Mat (CV_8UC1) 내부 변환.
-        /// 픽셀 메모리(ICogImage8PixelMemory)를 통해 행 단위로 복사합니다.
-        /// Marshal.Copy를 사용하여 관리/비관리 메모리 경계를 넘어 데이터를 복사합니다.
+        /// 픽셀 메모리(ICogImage8PixelMemory)를 통해 행 단위로 복사한다.
+        /// Marshal.Copy를 사용하여 관리/비관리 메모리 경계를 넘어 데이터를 복사한다.
         /// </summary>
         private static Mat ToMat(CogImage8Grey cogImg)
         {
@@ -147,8 +122,7 @@ namespace Vision.Converters
             }
             finally
             {
-                if (pixMem != null)
-                    cogImg.Dispose();
+                pixMem?.Dispose();
             }
 
             return mat;

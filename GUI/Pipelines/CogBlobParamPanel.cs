@@ -225,6 +225,7 @@ namespace Vision.UI
         }
 
         private static int Clamp(int v, int min, int max)     => v < min ? min : v > max ? max : v;
+
         private static decimal Clamp(decimal v, int min, int max) => v < min ? min : v > max ? max : v;
     }
 }

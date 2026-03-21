@@ -123,7 +123,6 @@
     <Compile Include="Steps\Cognex\CogStepBase.cs" />
     <Compile Include="Steps\Cognex\CogCaliperStep.cs" />
     <Compile Include="Steps\Cognex\CogBlobStep.cs" />
-    <Compile Include="Steps\Cognex\CogWeightedRGBStep.cs" />
     <Compile Include="Steps\Cognex\CaliperDistanceResult.cs" />
     <Compile Include="Steps\Cognex\CogCaliperDistanceStep.cs" />
     <Compile Include="Results\VisionResult.cs" />
@@ -131,11 +130,21 @@
     <Compile Include="GUI\IStepParamPanel.cs" />
     <Compile Include="GUI\StepDescriptor.cs" />
     <Compile Include="GUI\DisplayHelper.cs" />
-    <Compile Include="GUI\Pipelines\CogCaliperParamPanel.cs" />
-    <Compile Include="GUI\Pipelines\CogBlobParamPanel.cs" />
-    <Compile Include="GUI\Pipelines\CogConvertGrayParamPanel.cs" />
-    <Compile Include="GUI\Pipelines\CvThresholdParamPanel.cs" />
-    <Compile Include="GUI\Pipelines\CogCaliperDistanceParamPanel.cs" />
+    <Compile Include="GUI\Pipelines\CogCaliperParamPanel.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="GUI\Pipelines\CogBlobParamPanel.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="GUI\Pipelines\CogConvertGrayParamPanel.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="GUI\Pipelines\CvThresholdParamPanel.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="GUI\Pipelines\CogCaliperDistanceParamPanel.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
     <Compile Include="GUI\Pipelines\StepParamPanelFactory.cs" />
     <Compile Include="GUI\PipelineEditorForm.cs">
       <SubType>Form</SubType>

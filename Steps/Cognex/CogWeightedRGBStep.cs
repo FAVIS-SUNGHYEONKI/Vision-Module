@@ -8,7 +8,7 @@ using Cognex.VisionPro.ImageProcessing;
 namespace Vision.Steps.VisionPro
 {
     /// <summary>
-    /// CogImage24PlanarColor의 R, G, B 채널에 가중치를 적용하여 그레이스케일로 합성합니다.
+    /// CogImage24PlanarColor의 R, G, B 채널에 가중치를 적용하여 그레이스케일로 합성한다.
     ///
     /// 처리 순서:
     ///   1. GetPlane(0/1/2)으로 각 채널을 CogImage8Grey로 추출
@@ -26,10 +26,10 @@ namespace Vision.Steps.VisionPro
         /// <summary>스텝 고유 이름.</summary>
         public override string Name => "VisionPro.WeightedRGB";
 
-        /// <summary>컬러 이미지(CogImage24PlanarColor)만 입력으로 받습니다.</summary>
+        /// <summary>컬러 이미지(CogImage24PlanarColor)만 입력으로 받는다.</summary>
         public override ImageType RequiredInputType  => ImageType.Color;
 
-        /// <summary>가중 합산 후 그레이스케일 이미지를 출력합니다.</summary>
+        /// <summary>가중 합산 후 그레이스케일 이미지를 출력한다.</summary>
         public override ImageType ProducedOutputType => ImageType.Grey;
 
         /// <summary>적색 채널 가중치 (0.0~1.0). 기본값 1/3.</summary>
@@ -45,7 +45,7 @@ namespace Vision.Steps.VisionPro
         private readonly CogImageArithmeticTool _addRG    = new CogImageArithmeticTool();
         private readonly CogImageArithmeticTool _addFinal = new CogImageArithmeticTool();
 
-        /// <summary>Add 연산자로 CogImageArithmeticTool 2개를 초기화합니다.</summary>
+        /// <summary>Add 연산자로 CogImageArithmeticTool 2개를 초기화한다.</summary>
         public CogWeightedRGBStep()
         {
             _addRG.RunParams.Operator    = CogImageArithmeticConstants.Add;
@@ -54,7 +54,7 @@ namespace Vision.Steps.VisionPro
 
         // ── IStepSerializable ────────────────────────────────────────────
 
-        /// <summary>RedWeight, GreenWeight, BlueWeight를 XML에 저장합니다.</summary>
+        /// <summary>RedWeight, GreenWeight, BlueWeight를 XML에 저장한다.</summary>
         public void SaveParams(XElement el)
         {
             el.Add(
@@ -63,7 +63,7 @@ namespace Vision.Steps.VisionPro
                 new XElement("BlueWeight",  BlueWeight.ToString("R",  CultureInfo.InvariantCulture)));
         }
 
-        /// <summary>XML 요소에서 RedWeight, GreenWeight, BlueWeight를 복원합니다.</summary>
+        /// <summary>XML 요소에서 RedWeight, GreenWeight, BlueWeight를 복원한다.</summary>
         public void LoadParams(XElement el)
         {
             RedWeight   = Rd(el, "RedWeight",   1.0 / 3.0);
@@ -81,8 +81,8 @@ namespace Vision.Steps.VisionPro
         // ── ExecuteCore ──────────────────────────────────────────────────
 
         /// <summary>
-        /// 컬러 이미지의 R/G/B 채널에 각 가중치를 적용하여 합산한 그레이스케일 이미지를 생성합니다.
-        /// 입력이 CogImage24PlanarColor가 아니면 오류를 기록합니다.
+        /// 컬러 이미지의 R/G/B 채널에 각 가중치를 적용하여 합산한 그레이스케일 이미지를 생성한다.
+        /// 입력이 CogImage24PlanarColor가 아니면 오류를 기록한다.
         /// </summary>
         protected override void ExecuteCore(VisionContext context)
         {
@@ -122,7 +122,7 @@ namespace Vision.Steps.VisionPro
         }
 
         /// <summary>
-        /// CogImage8Grey 플레인의 각 픽셀에 weight를 곱한 새 CogImage8Grey를 반환합니다.
+        /// CogImage8Grey 플레인의 각 픽셀에 weight를 곱한 새 CogImage8Grey를 반환한다.
         /// </summary>
         private static CogImage8Grey ApplyWeight(CogImage8Grey src, double weight)
         {

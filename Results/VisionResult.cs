@@ -14,6 +14,7 @@ namespace Vision
 
     /// <summary>
     /// 파이프라인 한 번 실행의 결과를 담는 불변 객체.
+    /// (한번 만들어진 결과는 수정이 불가능하다.)
     ///
     /// 사용 예:
     /// <code>
@@ -32,12 +33,14 @@ namespace Vision
         /// <summary>파이프라인이 오류 없이 완료되었으면 true.</summary>
         public bool IsSuccess { get; }
 
-        /// <summary>발생한 오류 메시지 목록. IsSuccess == true면 비어 있습니다.</summary>
+        //외부에서 Add/Remove를 하지 못하도록 IReadOnlyList<T>로 선언
+
+        /// <summary>발생한 오류 메시지 목록. IsSuccess == true면 비어 있다.</summary>
         public IReadOnlyList<string> Errors { get; }
 
         /// <summary>
         /// 모든 CogCaliperStep 결과를 평탄화한 에지 목록.
-        /// <see cref="CaliperEdge.CaliperId"/>로 어느 Caliper 스텝의 결과인지 식별합니다.
+        /// CaliperId로 어느 Caliper 스텝의 결과인지 식별한다.
         /// </summary>
         public IReadOnlyList<CaliperEdge> CaliperEdges { get; }
 
@@ -69,19 +72,19 @@ namespace Vision
                 new List<BlobItem>(),
                 new List<DistanceMeasurement>());
 
-        /// <summary>특정 Caliper 스텝(caliperId)의 에지만 필터링합니다.</summary>
+        /// <summary>특정 Caliper 스텝(caliperId)의 에지만 필터링한다.</summary>
         public IEnumerable<CaliperEdge> GetEdges(int caliperId)
             => CaliperEdges.Where(e => e.CaliperId == caliperId);
 
-        /// <summary>특정 Blob 스텝(blobStepId)의 Blob만 필터링합니다.</summary>
+        /// <summary>특정 Blob 스텝(blobStepId)의 Blob만 필터링한다.</summary>
         public IEnumerable<BlobItem> GetBlobs(int blobStepId)
             => Blobs.Where(b => b.BlobStepId == blobStepId);
 
         // ── 팩토리: VisionContext → VisionResult ─────────────────────
 
         /// <summary>
-        /// VisionContext를 타입화된 VisionResult로 변환합니다.
-        /// PipelineController.RunAsync() 내부에서 호출됩니다.
+        /// VisionContext를 타입화된 VisionResult로 변환한다.
+        /// PipelineController.RunAsync() 내부에서 호출된다.
         /// </summary>
         internal static VisionResult FromContext(
             VisionContext context,

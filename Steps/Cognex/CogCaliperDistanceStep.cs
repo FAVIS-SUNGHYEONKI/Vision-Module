@@ -10,40 +10,34 @@ namespace Vision.Steps.VisionPro
     /// 파이프라인 내 두 CogCaliperStep의 에지 결과 간 거리를 측정하는 스텝.
     ///
     /// 동작:
-    ///   1. VisionContext.Data["VisionPro.Caliper.{CaliperId_A}"] 에서 에지 결과 A를 읽습니다.
-    ///   2. VisionContext.Data["VisionPro.Caliper.{CaliperId_B}"] 에서 에지 결과 B를 읽습니다.
-    ///   3. 각 결과와 연관된 Region이 있으면 1D Position → 2D (X, Y)로 변환합니다.
-    ///      Region이 없으면 Position을 X로, Y=0으로 사용합니다.
-    ///   4. 두 점 사이의 유클리드 거리를 계산하여 CaliperDistanceResult에 저장합니다.
+    ///   1. VisionContext.Data["VisionPro.Caliper.{CaliperId_A}"] 에서 에지 결과 A를 읽는다.
+    ///   2. VisionContext.Data["VisionPro.Caliper.{CaliperId_B}"] 에서 에지 결과 B를 읽는다.
+    ///   3. 각 결과와 연관된 Region이 있으면 1D Position → 2D (X, Y)로 변환한다.
+    ///      Region이 없으면 Position을 X로, Y=0으로 사용한다.
+    ///   4. 두 점 사이의 유클리드 거리를 계산하여 CaliperDistanceResult에 저장한다.
     ///
     /// 결과 키: "VisionPro.CaliperDistance.{N}" (여러 개 등록 시 N 자동 증가)
     /// 결과 타입: CaliperDistanceResult
     ///
     /// 전제 조건:
-    ///   - 이 스텝이 실행되기 전에 참조된 CogCaliperStep들이 먼저 실행되어야 합니다.
-    ///   - CaliperId_A/B 는 파이프라인 실행 순서대로 부여된 Caliper 키 인덱스입니다.
+    ///   - 이 스텝이 실행되기 전에 참조된 CogCaliperStep들이 먼저 실행되어야 한다.
+    ///   - CaliperId_A/B 는 파이프라인 실행 순서대로 부여된 Caliper 키 인덱스이다.
     ///     예: 파이프라인에 Caliper 스텝이 2개이면 CaliperId 0, 1
     ///
-    /// XML 직렬화:
-    ///   &lt;Step type="VisionPro.CaliperDistance"&gt;
-    ///     &lt;CaliperId_A&gt;0&lt;/CaliperId_A&gt;
-    ///     &lt;EdgeIndex_A&gt;0&lt;/EdgeIndex_A&gt;
-    ///     &lt;CaliperId_B&gt;1&lt;/CaliperId_B&gt;
-    ///     &lt;EdgeIndex_B&gt;0&lt;/EdgeIndex_B&gt;
-    ///   &lt;/Step&gt;
+    /// XML 직렬화 필드: CaliperId_A, EdgeIndex_A, CaliperId_B, EdgeIndex_B
     /// </summary>
     public class CogCaliperDistanceStep : IVisionStep, IImageTypedStep, IStepSerializable, IInspectionStep
     {
         /// <summary>스텝 고유 이름.</summary>
         public string Name => "VisionPro.CaliperDistance";
 
-        /// <summary>이미지를 사용하지 않으므로 어떤 타입도 허용합니다.</summary>
+        /// <summary>이미지를 사용하지 않으므로 어떤 타입도 허용한다.</summary>
         public bool ContinueOnFailure => false;
 
-        /// <summary>이미지를 읽거나 변환하지 않으므로 Any를 반환합니다.</summary>
+        /// <summary>이미지를 읽거나 변환하지 않으므로 Any를 반환한다.</summary>
         public ImageType RequiredInputType  => ImageType.Any;
 
-        /// <summary>이미지를 변환하지 않으므로 Any를 반환합니다.</summary>
+        /// <summary>이미지를 변환하지 않으므로 Any를 반환한다.</summary>
         public ImageType ProducedOutputType => ImageType.Any;
 
         /// <summary>참조할 Caliper 결과 A의 인덱스 (0-based). 기본값 0.</summary>
@@ -62,7 +56,7 @@ namespace Vision.Steps.VisionPro
         private const string DistancePrefix  = "VisionPro.CaliperDistance.";
 
         /// <summary>
-        /// 두 Caliper 결과를 읽고 거리를 계산하여 context.Data에 저장합니다.
+        /// 두 Caliper 결과를 읽고 거리를 계산하여 context.Data에 저장한다.
         /// </summary>
         public void Execute(VisionContext context)
         {
@@ -131,8 +125,8 @@ namespace Vision.Steps.VisionPro
         }
 
         /// <summary>
-        /// Caliper 1D Position을 이미지 2D 좌표로 변환합니다.
-        /// Region이 없으면 Position을 X, 0을 Y로 사용합니다.
+        /// Caliper 1D Position을 이미지 2D 좌표로 변환한다.
+        /// Region이 없으면 Position을 X, 0을 Y로 사용한다.
         /// </summary>
         private static void ToImageXY(
             double position, CogRectangleAffine region,
@@ -153,7 +147,7 @@ namespace Vision.Steps.VisionPro
 
         // ── IStepSerializable ────────────────────────────────────────────
 
-        /// <summary>CaliperId_A/B, EdgeIndex_A/B를 XML에 저장합니다.</summary>
+        /// <summary>CaliperId_A/B, EdgeIndex_A/B를 XML에 저장한다.</summary>
         public void SaveParams(XElement el)
         {
             el.Add(
@@ -163,7 +157,7 @@ namespace Vision.Steps.VisionPro
                 new XElement("EdgeIndex_B",  EdgeIndex_B));
         }
 
-        /// <summary>XML 요소에서 CaliperId_A/B, EdgeIndex_A/B를 복원합니다.</summary>
+        /// <summary>XML 요소에서 CaliperId_A/B, EdgeIndex_A/B를 복원한다.</summary>
         public void LoadParams(XElement el)
         {
             CaliperId_A = Ri(el, "CaliperId_A", 0);
@@ -172,7 +166,7 @@ namespace Vision.Steps.VisionPro
             EdgeIndex_B = Ri(el, "EdgeIndex_B", 0);
         }
 
-        /// <summary>XML 요소에서 int 값을 읽습니다. 실패 시 def 반환.</summary>
+        /// <summary>XML 요소에서 int 값을 읽는다. 실패 시 def 반환.</summary>
         private static int Ri(XElement el, string n, int def)
         {
             var s = el.Element(n)?.Value;
