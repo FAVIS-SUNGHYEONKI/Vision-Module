@@ -10,11 +10,11 @@ namespace Vision
     /// 등록된 IVisionStep을 순서대로 실행하는 파이프라인 실행 엔진.
     ///
     /// 특징:
-    ///   - 메서드 체이닝으로 스텝을 연결합니다: pipeline.AddStep(step1).AddStep(step2)
-    ///   - 각 스텝은 Task.Run()으로 백그라운드 스레드에서 실행됩니다.
-    ///   - 스텝 내부 예외는 개별 try-catch로 격리되어 파이프라인 전체를 중단시키지 않습니다.
-    ///     단, 해당 스텝의 ContinueOnFailure = false 이면 그 스텝 이후는 실행되지 않습니다.
-    ///   - CancellationToken을 지원하여 외부에서 실행을 취소할 수 있습니다.
+    ///   - 메서드 체이닝으로 스텝을 연결한다: pipeline.AddStep(step1).AddStep(step2)
+    ///   - 각 스텝은 Task.Run()으로 백그라운드 스레드에서 실행된다.
+    ///   - 스텝 내부 예외는 개별 try-catch로 격리되어 파이프라인 전체를 중단시키지 않는다.
+    ///     단, 해당 스텝의 ContinueOnFailure = false 이면 그 스텝 이후는 실행되지 않는다.
+    ///   - CancellationToken을 지원하여 외부에서 실행을 취소할 수 있다.
     ///
     /// 사용 예:
     ///   using var pipeline = new VisionPipeline();
@@ -23,14 +23,14 @@ namespace Vision
     /// </summary>
     public class VisionPipeline : IDisposable
     {
-        /// <summary>등록된 스텝 목록. AddStep() 호출 순서로 실행됩니다.</summary>
+        /// <summary>등록된 스텝 목록. AddStep() 호출 순서로 실행된다.</summary>
         private readonly List<IVisionStep> _steps = new List<IVisionStep>();
 
         /// <summary>
-        /// 스텝을 파이프라인 끝에 추가합니다.
+        /// 스텝을 파이프라인 끝에 추가한다.
         /// </summary>
         /// <param name="step">추가할 스텝 인스턴스</param>
-        /// <returns>메서드 체이닝을 위해 자기 자신(this)을 반환합니다.</returns>
+        /// <returns>메서드 체이닝을 위해 자기 자신(this)을 반환한다.</returns>
         public VisionPipeline AddStep(IVisionStep step)
         {
             _steps.Add(step);
@@ -38,7 +38,7 @@ namespace Vision
         }
 
         /// <summary>
-        /// 등록된 모든 스텝을 순서대로 비동기 실행하고 완료된 컨텍스트를 반환합니다.
+        /// 등록된 모든 스텝을 순서대로 비동기 실행하고 완료된 컨텍스트를 반환한다.
         ///
         /// 실행 흐름:
         ///   1. 각 스텝을 Task.Run()으로 백그라운드에서 실행
@@ -88,8 +88,8 @@ namespace Vision
         }
 
         /// <summary>
-        /// 파이프라인을 폐기합니다. 등록된 스텝 목록을 비웁니다.
-        /// 스텝 인스턴스 자체는 파이프라인이 소유하지 않으므로 여기서 해제하지 않습니다.
+        /// 파이프라인을 폐기한다. 등록된 스텝 목록을 비운다.
+        /// 스텝 인스턴스 자체는 파이프라인이 소유하지 않으므로 여기서 해제하지 않는다.
         /// </summary>
         public void Dispose() => _steps.Clear();
     }

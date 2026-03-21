@@ -17,6 +17,7 @@ namespace Vision.UI
         private ComboBox      _cmbPolarity;
         private NumericUpDown _nudFilterSize;
         private NumericUpDown _nudMaxResults;
+        private ComboBox      _cmbSelectionMode;
 
         private bool _syncing;
 
@@ -27,6 +28,17 @@ namespace Vision.UI
         private static readonly string[] EdgeModeNames =
         {
             "Single Edge (단일 에지)",
+        };
+
+        private static readonly CaliperSelectionMode[] SelectionModes =
+        {
+            CaliperSelectionMode.FirstEdge,
+            CaliperSelectionMode.BestEdge,
+        };
+        private static readonly string[] SelectionModeNames =
+        {
+            "First Edge (첫 번째 에지)",
+            "Best Edge (최고 점수 에지)",
         };
         private static readonly CogCaliperPolarityConstants[] Polarities =
         {
@@ -107,6 +119,17 @@ namespace Vision.UI
                 Maximum  = 20,
             };
             Controls.Add(_nudMaxResults);
+            y += RowH;
+
+            AddLabel("선택 모드:", LblX, y + 3, LblW);
+            _cmbSelectionMode = new ComboBox
+            {
+                Location      = new Point(CtrlX, y),
+                Size          = new Size(CtrlW, 21),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+            };
+            _cmbSelectionMode.Items.AddRange(SelectionModeNames);
+            Controls.Add(_cmbSelectionMode);
 
             Size = new Size(350, y + 40);
         }
@@ -129,11 +152,12 @@ namespace Vision.UI
             _syncing = true;
             try
             {
-                _nudContrast.Value         = Clamp((decimal)s.RunParams.ContrastThreshold, _nudContrast.Minimum, _nudContrast.Maximum);
-                _cmbEdgeMode.SelectedIndex = Math.Max(0, Array.IndexOf(EdgeModes,  s.RunParams.EdgeMode));
-                _cmbPolarity.SelectedIndex = Math.Max(0, Array.IndexOf(Polarities, s.RunParams.Edge0Polarity));
-                _nudFilterSize.Value       = Clamp(s.RunParams.FilterHalfSizeInPixels, (int)_nudFilterSize.Minimum, (int)_nudFilterSize.Maximum);
-                _nudMaxResults.Value       = Clamp(s.RunParams.MaxResults,             (int)_nudMaxResults.Minimum, (int)_nudMaxResults.Maximum);
+                _nudContrast.Value              = Clamp((decimal)s.RunParams.ContrastThreshold, _nudContrast.Minimum, _nudContrast.Maximum);
+                _cmbEdgeMode.SelectedIndex      = Math.Max(0, Array.IndexOf(EdgeModes,      s.RunParams.EdgeMode));
+                _cmbPolarity.SelectedIndex      = Math.Max(0, Array.IndexOf(Polarities,     s.RunParams.Edge0Polarity));
+                _nudFilterSize.Value            = Clamp(s.RunParams.FilterHalfSizeInPixels, (int)_nudFilterSize.Minimum, (int)_nudFilterSize.Maximum);
+                _nudMaxResults.Value            = Clamp(s.RunParams.MaxResults,             (int)_nudMaxResults.Minimum, (int)_nudMaxResults.Maximum);
+                _cmbSelectionMode.SelectedIndex = Math.Max(0, Array.IndexOf(SelectionModes, s.SelectionMode));
             }
             finally { _syncing = false; }
         }
@@ -144,11 +168,13 @@ namespace Vision.UI
             if (s == null) return;
             s.RunParams.ContrastThreshold = (double)_nudContrast.Value;
             int ei = _cmbEdgeMode.SelectedIndex;
-            if (ei >= 0 && ei < EdgeModes.Length) s.RunParams.EdgeMode = EdgeModes[ei];
+            if (ei >= 0 && ei < EdgeModes.Length)      s.RunParams.EdgeMode      = EdgeModes[ei];
             int pi = _cmbPolarity.SelectedIndex;
-            if (pi >= 0 && pi < Polarities.Length) s.RunParams.Edge0Polarity = Polarities[pi];
+            if (pi >= 0 && pi < Polarities.Length)     s.RunParams.Edge0Polarity = Polarities[pi];
             s.RunParams.FilterHalfSizeInPixels = (int)_nudFilterSize.Value;
             s.RunParams.MaxResults             = (int)_nudMaxResults.Value;
+            int si = _cmbSelectionMode.SelectedIndex;
+            if (si >= 0 && si < SelectionModes.Length) s.SelectionMode           = SelectionModes[si];
         }
 
         private static decimal Clamp(decimal v, decimal min, decimal max)

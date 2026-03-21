@@ -6,17 +6,25 @@ namespace Vision.Steps.OpenCV
     /// <summary>
     /// OpenCV 기반 스텝의 추상 기반 클래스.
     ///
-    /// VpImage만 있을 경우 자동으로 Mat(CvImage)으로 변환한 뒤 ExecuteCore를 호출합니다.
-    /// 이를 통해 VisionPro 스텝 다음에 바로 OpenCV 스텝을 연결할 수 있습니다.
+    /// VpImage만 있을 경우 자동으로 Mat(CvImage)으로 변환한 뒤 ExecuteCore를 호출한다.
+    /// 이를 통해 VisionPro 스텝 다음에 바로 OpenCV 스텝을 연결할 수 있다.
     /// </summary>
     public abstract class CvStepBase : IVisionStep, IImageTypedStep
     {
-        /// <summary>스텝 고유 이름. 하위 클래스에서 반드시 구현해야 합니다.</summary>
+        /// <summary>스텝 고유 이름. 하위 클래스에서 반드시 구현해야 한다.</summary>
         public abstract string Name { get; }
+
+        private string _displayName;
+        /// <summary>표시 이름. 설정하지 않으면 Name을 반환한다.</summary>
+        public string DisplayName
+        {
+            get => string.IsNullOrEmpty(_displayName) ? Name : _displayName;
+            set => _displayName = value;
+        }
 
         /// <summary>
         /// 스텝 실패 시 파이프라인 계속 진행 여부.
-        /// 기본값 false: 실패하면 이후 스텝 실행을 중단합니다.
+        /// 기본값 false: 실패하면 이후 스텝 실행을 중단한다.
         /// </summary>
         public virtual bool ContinueOnFailure => false;
 
@@ -24,12 +32,12 @@ namespace Vision.Steps.OpenCV
         /// <summary>요구 입력 이미지 타입. 기본값 Any (자동 변환으로 그레이/컬러 모두 허용).</summary>
         public virtual ImageType RequiredInputType  => ImageType.Any;
 
-        /// <summary>출력 이미지 타입. OpenCV 스텝은 기본적으로 그레이스케일 Mat을 출력합니다.</summary>
+        /// <summary>출력 이미지 타입. OpenCV 스텝은 기본적으로 그레이스케일 Mat을 출력한다.</summary>
         public virtual ImageType ProducedOutputType => ImageType.Grey;
 
         /// <summary>
-        /// 스텝을 실행합니다. CogImage만 있는 경우 OpenCV Mat으로 자동 변환 후
-        /// <see cref="ExecuteCore"/>를 호출합니다.
+        /// 스텝을 실행한다. CogImage만 있는 경우 OpenCV Mat으로 자동 변환 후
+        /// <see cref="ExecuteCore"/>를 호출한다.
         /// </summary>
         /// <param name="context">공유 파이프라인 컨텍스트</param>
         public void Execute(VisionContext context)
@@ -47,8 +55,8 @@ namespace Vision.Steps.OpenCV
         }
 
         /// <summary>
-        /// 실제 OpenCV 처리 로직. 하위 클래스에서 구현합니다.
-        /// 이 메서드 호출 시점에 context.MatImage는 반드시 유효합니다.
+        /// 실제 OpenCV 처리 로직. 하위 클래스에서 구현한다.
+        /// 이 메서드 호출 시점에 context.MatImage는 반드시 유효하다.
         /// </summary>
         protected abstract void ExecuteCore(VisionContext context);
     }

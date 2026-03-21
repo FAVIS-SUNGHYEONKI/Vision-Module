@@ -9,7 +9,7 @@ namespace Vision.UI
     /// <summary>
     /// CogDisplay에 Vision 결과 그래픽을 그리는 정적 헬퍼 클래스.
     ///
-    /// PipelineController.DrawResults()와 PipelineEditorForm 내부에서 공통 사용됩니다.
+    /// PipelineController.DrawResults()와 PipelineEditorForm 내부에서 공통으로 사용된다.
     /// </summary>
     public static class DisplayHelper
     {
@@ -17,8 +17,8 @@ namespace Vision.UI
 
         /// <summary>
         /// VisionResult의 모든 결과 그래픽(에지, Blob, 거리선)을
-        /// CogDisplay의 StaticGraphics에 추가합니다.
-        /// display.StaticGraphics.Clear()는 호출자가 책임집니다.
+        /// CogDisplay의 StaticGraphics에 추가한다.
+        /// display.StaticGraphics.Clear()는 호출자가 책임진다.
         /// </summary>
         public static void DrawAllResults(
             Cognex.VisionPro.Display.CogDisplay display,
@@ -41,7 +41,7 @@ namespace Vision.UI
 
         // ── 개별 그리기 메서드 ───────────────────────────────────────────
 
-        /// <summary>Caliper 에지 위치에 초록 십자 마커를 그립니다.</summary>
+        /// <summary>Caliper 에지 위치에 초록 십자 마커를 그린다.</summary>
         public static void DrawEdge(
             Cognex.VisionPro.Display.CogDisplay display,
             CaliperEdge edge)
@@ -63,7 +63,7 @@ namespace Vision.UI
             catch { }
         }
 
-        /// <summary>Blob 외곽선(GetBoundary 폴리곤)을 노란색으로 그립니다.</summary>
+        /// <summary>Blob 외곽선(GetBoundary 폴리곤)을 노란색으로 그린다.</summary>
         public static void DrawBlob(
             Cognex.VisionPro.Display.CogDisplay display,
             BlobItem blob)
@@ -82,7 +82,7 @@ namespace Vision.UI
             catch { }
         }
 
-        /// <summary>두 점을 잇는 마젠타 거리 측정선과 끝점 마커를 그립니다.</summary>
+        /// <summary>두 점을 잇는 마젠타 거리 측정선과 끝점 마커를 그린다.</summary>
         public static void DrawDistance(
             Cognex.VisionPro.Display.CogDisplay display,
             DistanceMeasurement dist, int index)

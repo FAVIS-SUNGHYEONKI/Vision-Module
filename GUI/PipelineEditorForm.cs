@@ -13,15 +13,16 @@ using Vision.Steps.VisionPro;
 namespace Vision.UI
 {
     /// <summary>
-    /// 파이프라인 스텝 구성 및 각 스텝의 파라미터를 편집하는 폼.
-    /// PipelineController.ShowEditor()를 통해 다이얼로그로 호출됩니다.
+    /// 파이프라인 목록 관리 및 스텝 구성/파라미터를 편집하는 폼.
+    /// PipelineController.ShowEditor()를 통해 다이얼로그로 호출된다.
     /// </summary>
     public partial class PipelineEditorForm : Form
     {
         private readonly List<StepDescriptor> _available;
         private readonly ICogImage            _inputImage;
         private readonly PipelineManager      _pipelineManager;
-        private readonly PipelineConfig       _config;
+        private          PipelineConfig       _config;           // 현재 편집 중인 파이프라인
+        private          int                  _currentPipelineIdx = -1;
 
         private Cognex.VisionPro.Display.CogDisplay cogTestDisplay;
         private CogRectangleAffine _testRegion;
@@ -29,15 +30,14 @@ namespace Vision.UI
         /// <summary>편집 결과 스텝 목록 (OK 클릭 후 유효).</summary>
         public List<IVisionStep> PipelineSteps { get; private set; }
 
-        /// <summary>편집 결과 파이프라인 이름 (OK 클릭 후 유효).</summary>
-        public string PipelineName => txtPipelineName.Text.Trim();
+        /// <summary>편집기에서 최종 선택된 파이프라인 인덱스.</summary>
+        public int SelectedPipelineIndex => _currentPipelineIdx;
 
         private IStepParamPanel _currentPanel;
         private int             _currentPanelStepIdx = -1;
 
         internal PipelineEditorForm(
             List<StepDescriptor> availableSteps,
-            PipelineConfig       config,
             PipelineManager      pipelineManager,
             ICogImage            inputImage = null)
         {
@@ -47,10 +47,6 @@ namespace Vision.UI
             _available       = availableSteps;
             _inputImage      = inputImage;
             _pipelineManager = pipelineManager;
-            _config          = config;
-            PipelineSteps    = new List<IVisionStep>(config.Steps);
-
-            txtPipelineName.Text = config.Name;
 
             foreach (var desc in _available)
             {
@@ -60,7 +56,11 @@ namespace Vision.UI
                     lstOpenCV.Items.Add(desc);
             }
 
-            RefreshPipelineList();
+            RefreshPipelineComboInEditor();
+
+            // 현재 활성 파이프라인으로 초기화
+            int initIdx = Math.Max(0, Math.Min(pipelineManager.ActiveIndex, pipelineManager.Configs.Count - 1));
+            SwitchToPipeline(initIdx);
         }
 
         private void PipelineEditorForm_Load(object sender, EventArgs e)
@@ -87,6 +87,191 @@ namespace Vision.UI
             cogTestDisplay.TabIndex = 100;
             ((System.ComponentModel.ISupportInitialize)cogTestDisplay).EndInit();
             Controls.Add(cogTestDisplay);
+        }
+
+        // ── 파이프라인 ComboBox 관리 ─────────────────────────────────────
+
+        // 파이프라인별 staged 스텝 목록 — OK 전까지 실제 config에 반영하지 않음
+        private readonly Dictionary<int, List<IVisionStep>> _stagedByPipeline
+            = new Dictionary<int, List<IVisionStep>>();
+
+        private bool _pipelineComboSyncing;
+
+        private void RefreshPipelineComboInEditor()
+        {
+            _pipelineComboSyncing = true;
+            try
+            {
+                cmbPipelineSelect.Items.Clear();
+                foreach (var cfg in _pipelineManager.Configs)
+                    cmbPipelineSelect.Items.Add(cfg.Name);
+
+                if (_currentPipelineIdx >= 0 && _currentPipelineIdx < cmbPipelineSelect.Items.Count)
+                    cmbPipelineSelect.SelectedIndex = _currentPipelineIdx;
+            }
+            finally { _pipelineComboSyncing = false; }
+        }
+
+        private void cmbPipelineSelect_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (_pipelineComboSyncing) return;
+            int idx = cmbPipelineSelect.SelectedIndex;
+            if (idx < 0 || idx == _currentPipelineIdx) return;
+            StashCurrentStaged();
+            SwitchToPipeline(idx);
+        }
+
+        private void SwitchToPipeline(int idx)
+        {
+            if (idx < 0 || idx >= _pipelineManager.Configs.Count) return;
+            _currentPipelineIdx = idx;
+            _config             = _pipelineManager.Configs[idx];
+
+            // staged가 있으면 재사용, 없으면 실제 config를 deep copy
+            List<IVisionStep> staged;
+            PipelineSteps = _stagedByPipeline.TryGetValue(idx, out staged)
+                ? new List<IVisionStep>(staged)
+                : DeepCopySteps(_config.Steps);
+
+            ClearParamPanel();
+            RefreshPipelineList();
+
+            _pipelineComboSyncing = true;
+            cmbPipelineSelect.SelectedIndex = idx;
+            _pipelineComboSyncing = false;
+        }
+
+        /// <summary>현재 staged(PipelineSteps)를 dict에 보관한다. 파이프라인 전환 시 호출.</summary>
+        private void StashCurrentStaged()
+        {
+            FlushCurrentPanel();
+            if (_currentPipelineIdx >= 0)
+                _stagedByPipeline[_currentPipelineIdx] = new List<IVisionStep>(PipelineSteps);
+        }
+
+        /// <summary>staged를 현재 _config.Steps에 반영한다. 저장 버튼 전용.</summary>
+        private void CommitCurrentToConfig()
+        {
+            FlushCurrentPanel();
+            if (_config != null)
+                _config.Steps = new List<IVisionStep>(PipelineSteps);
+        }
+
+        /// <summary>모든 staged를 실제 config에 반영한다. OK 버튼 전용.</summary>
+        private void ApplyAllStagedToConfigs()
+        {
+            StashCurrentStaged();   // 현재 파이프라인도 dict에 저장
+            foreach (var kv in _stagedByPipeline)
+            {
+                int idx = kv.Key;
+                if (idx >= 0 && idx < _pipelineManager.Configs.Count)
+                    _pipelineManager.Configs[idx].Steps = new List<IVisionStep>(kv.Value);
+            }
+        }
+
+        /// <summary>IStepSerializable을 통해 스텝 목록을 deep copy한다.</summary>
+        private List<IVisionStep> DeepCopySteps(List<IVisionStep> source)
+        {
+            var result = new List<IVisionStep>();
+            foreach (var step in source)
+            {
+                var desc = _available.Find(d => d.TypeName == step.Name);
+                if (desc == null) continue;
+                var newStep   = desc.CreateStep();
+                var srcSerial = step    as IStepSerializable;
+                var dstSerial = newStep as IStepSerializable;
+                if (srcSerial != null && dstSerial != null)
+                {
+                    var el = new System.Xml.Linq.XElement("Step");
+                    srcSerial.SaveParams(el);
+                    dstSerial.LoadParams(el);
+                }
+                result.Add(newStep);
+            }
+            return result;
+        }
+
+        // ── 파이프라인 CRUD ──────────────────────────────────────────────
+
+        private void btnNewPl_Click(object sender, EventArgs e)
+        {
+            string name = ShowInputDialog("새 파이프라인", "파이프라인 이름:", "새 파이프라인");
+            if (name == null) return;
+            StashCurrentStaged();
+            _pipelineManager.Add(new PipelineConfig { Name = name });
+            RefreshPipelineComboInEditor();
+            SwitchToPipeline(_pipelineManager.Configs.Count - 1);
+        }
+
+        private void btnDupePl_Click(object sender, EventArgs e)
+        {
+            StashCurrentStaged();
+            string name = ShowInputDialog("파이프라인 복제", "복제할 이름:", _config.Name + " (복사본)");
+            if (name == null) return;
+
+            // _config.Steps가 아닌 staged(PipelineSteps)를 복제 기준으로 사용
+            var copy = new PipelineConfig { Name = name };
+            copy.Steps.AddRange(DeepCopySteps(PipelineSteps));
+
+            _pipelineManager.Add(copy);
+            RefreshPipelineComboInEditor();
+            SwitchToPipeline(_pipelineManager.Configs.Count - 1);
+        }
+
+        private void btnDeletePl_Click(object sender, EventArgs e)
+        {
+            if (_pipelineManager.Configs.Count <= 1)
+            {
+                MessageBox.Show("마지막 파이프라인은 삭제할 수 없습니다.", "알림",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            int removeIdx = _currentPipelineIdx;
+
+            // staged dict 인덱스 재정렬 (삭제된 인덱스 이후 항목을 -1 시프트)
+            _stagedByPipeline.Remove(removeIdx);
+            var reindexed = new Dictionary<int, List<IVisionStep>>();
+            foreach (var kv in _stagedByPipeline)
+                reindexed[kv.Key > removeIdx ? kv.Key - 1 : kv.Key] = kv.Value;
+            _stagedByPipeline.Clear();
+            foreach (var kv in reindexed) _stagedByPipeline[kv.Key] = kv.Value;
+
+            _pipelineManager.RemoveAt(removeIdx);
+            int nextIdx = Math.Min(removeIdx, _pipelineManager.Configs.Count - 1);
+            RefreshPipelineComboInEditor();
+            SwitchToPipeline(nextIdx);
+        }
+
+        private void btnRenamePl_Click(object sender, EventArgs e)
+        {
+            string cur  = _config.Name;
+            string name = ShowInputDialog("이름 변경", "새 이름:", cur);
+            if (name == null || name == cur) return;
+            _config.Name = name;
+            RefreshPipelineComboInEditor();
+        }
+
+        private static string ShowInputDialog(string title, string prompt, string defaultValue = "")
+        {
+            var form = new Form
+            {
+                Text            = title,
+                ClientSize      = new Size(380, 105),
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                StartPosition   = FormStartPosition.CenterParent,
+                MaximizeBox     = false,
+                MinimizeBox     = false,
+            };
+            var lbl    = new Label  { Text = prompt, Left = 10, Top = 12, AutoSize = true };
+            var txt    = new TextBox{ Text = defaultValue, Left = 10, Top = 32, Width = 356 };
+            var btnOk  = new Button { Text = "확인", Left = 195, Top = 62, Width = 80, DialogResult = DialogResult.OK };
+            var btnCnl = new Button { Text = "취소", Left = 285, Top = 62, Width = 80, DialogResult = DialogResult.Cancel };
+            form.Controls.AddRange(new Control[] { lbl, txt, btnOk, btnCnl });
+            form.AcceptButton = btnOk;
+            form.CancelButton = btnCnl;
+            txt.SelectAll();
+            return form.ShowDialog() == DialogResult.OK && !string.IsNullOrWhiteSpace(txt.Text)
+                ? txt.Text.Trim() : null;
         }
 
         // ── 이미지 타입 유틸리티 ─────────────────────────────────────────
@@ -120,7 +305,7 @@ namespace Vision.UI
         private void lstCognex_DoubleClick(object sender, EventArgs e) => btnAdd_Click(sender, e);
         private void lstOpenCV_DoubleClick(object sender, EventArgs e) => btnAdd_Click(sender, e);
 
-        // ── 파이프라인 목록 갱신 ─────────────────────────────────────────
+        // ── 스텝 순서 목록 갱신 ─────────────────────────────────────────
 
         private void RefreshPipelineList(int selectIdx = -1)
         {
@@ -140,7 +325,10 @@ namespace Vision.UI
                     compat = ok ? "  OK"
                         : "  !! " + StepDescriptor.TypeLabel(prevOut) + "->" + StepDescriptor.TypeLabel(inType) + " 불일치";
                 }
-                lstPipeline.Items.Add((i + 1) + ". " + typeTag.PadRight(16) + step.Name + compat);
+                string label = step.DisplayName != step.Name
+                    ? step.DisplayName + "  [" + step.Name + "]"
+                    : step.Name;
+                lstPipeline.Items.Add((i + 1) + ". " + typeTag.PadRight(16) + label + compat);
             }
             lstPipeline.EndUpdate();
             UpdatePipelineButtonStates();
@@ -193,6 +381,81 @@ namespace Vision.UI
             RefreshPipelineList(Math.Min(idx, PipelineSteps.Count - 1));
         }
 
+        private void lstPipeline_DoubleClick(object sender, EventArgs e)
+            => btnRemove_Click(sender, e);
+
+        // ── 스텝 드래그&드롭 순서 변경 ──────────────────────────────────
+
+        private int _dragFromIdx   = -1;
+        private int _dragInsertIdx = -1;
+
+        private void lstPipeline_MouseDown(object sender, MouseEventArgs e)
+        {
+            int idx = lstPipeline.IndexFromPoint(e.Location);
+            if (idx < 0) return;
+            _dragFromIdx = idx;
+            lstPipeline.DoDragDrop(idx, DragDropEffects.Move);
+        }
+
+        private void lstPipeline_DragOver(object sender, DragEventArgs e)
+        {
+            if (!e.Data.GetDataPresent(typeof(int)))
+            {
+                e.Effect = DragDropEffects.None;
+                return;
+            }
+            e.Effect = DragDropEffects.Move;
+
+            var pt        = lstPipeline.PointToClient(new System.Drawing.Point(e.X, e.Y));
+            int newInsert = GetDragInsertIndex(pt);
+            if (newInsert == _dragInsertIdx) return;
+
+            _dragInsertIdx          = newInsert;
+            lstPipeline.InsertIndex = newInsert;
+            lstPipeline.Invalidate();
+        }
+
+        private void lstPipeline_DragDrop(object sender, DragEventArgs e)
+        {
+            lstPipeline.InsertIndex = -1;
+            lstPipeline.Invalidate();
+            int insertIdx  = _dragInsertIdx;
+            _dragInsertIdx = -1;
+
+            if (!e.Data.GetDataPresent(typeof(int))) return;
+
+            // dragFrom 제거 후 인덱스 보정
+            int effectiveInsert = insertIdx > _dragFromIdx ? insertIdx - 1 : insertIdx;
+            if (effectiveInsert == _dragFromIdx) return;
+
+            FlushCurrentPanel();
+            var step = PipelineSteps[_dragFromIdx];
+            PipelineSteps.RemoveAt(_dragFromIdx);
+            PipelineSteps.Insert(effectiveInsert, step);
+            _currentPanelStepIdx = -1;
+            RefreshPipelineList(effectiveInsert);
+        }
+
+        private void lstPipeline_DragLeave(object sender, EventArgs e)
+        {
+            lstPipeline.InsertIndex = -1;
+            lstPipeline.Invalidate();
+            _dragInsertIdx = -1;
+        }
+
+        // 마우스 Y 위치 기준으로 삽입 위치(0 ~ Count) 계산
+        private int GetDragInsertIndex(System.Drawing.Point clientPt)
+        {
+            int count = lstPipeline.Items.Count;
+            for (int i = 0; i < count; i++)
+            {
+                var rect = lstPipeline.GetItemRectangle(i);
+                if (clientPt.Y < rect.Top + rect.Height / 2)
+                    return i;
+            }
+            return count;
+        }
+
         private void btnMoveUp_Click(object sender, EventArgs e)
         {
             int idx = lstPipeline.SelectedIndex;
@@ -243,14 +506,15 @@ namespace Vision.UI
                     AutoSize  = true,
                     ForeColor = Color.Gray,
                 });
-                _currentPanelStepIdx = stepIdx;
+                _currentPanelStepIdx       = stepIdx;
+                txtStepDisplayName.Text    = step.DisplayName;
+                txtStepDisplayName.Enabled = true;
                 return;
             }
 
             var panel = ctrl as IStepParamPanel;
             panel?.BindStep(step);
 
-            // Blob 트랙바 실시간 미리보기 구독
             var blobPanel = ctrl as CogBlobParamPanel;
             if (blobPanel != null)
                 blobPanel.PreviewRequested += async (s, ev) =>
@@ -263,20 +527,31 @@ namespace Vision.UI
 
             _currentPanel        = panel;
             _currentPanelStepIdx = stepIdx;
+
+            // 표시 이름 TextBox 활성화
+            txtStepDisplayName.Text    = step.DisplayName;
+            txtStepDisplayName.Enabled = true;
         }
 
         private void FlushCurrentPanel()
         {
-            if (_currentPanel == null || _currentPanelStepIdx < 0
-                || _currentPanelStepIdx >= PipelineSteps.Count) return;
-            _currentPanel.FlushStep(PipelineSteps[_currentPanelStepIdx]);
+            if (_currentPanelStepIdx < 0 || _currentPanelStepIdx >= PipelineSteps.Count) return;
+
+            // 표시 이름 반영
+            var name = txtStepDisplayName.Text.Trim();
+            PipelineSteps[_currentPanelStepIdx].DisplayName =
+                string.IsNullOrEmpty(name) ? PipelineSteps[_currentPanelStepIdx].Name : name;
+
+            _currentPanel?.FlushStep(PipelineSteps[_currentPanelStepIdx]);
         }
 
         private void ClearParamPanel()
         {
             grpStepParams.Controls.Clear();
-            _currentPanel        = null;
-            _currentPanelStepIdx = -1;
+            _currentPanel               = null;
+            _currentPanelStepIdx        = -1;
+            txtStepDisplayName.Text     = "";
+            txtStepDisplayName.Enabled  = false;
         }
 
         // ── Region 설정 ──────────────────────────────────────────────────
@@ -369,7 +644,6 @@ namespace Vision.UI
             btnTestRun.Enabled       = false;
             txtTestResult.Text       = "테스트 실행 중...";
 
-            // 선택 스텝이 검사 스텝이면 이전 검사 스텝도 실행 (데이터 의존성)
             bool selectedIsInspection = PipelineSteps[idx] is IInspectionStep;
             var context = new VisionContext { CogImage = _inputImage };
             try
@@ -488,14 +762,15 @@ namespace Vision.UI
                             }
                         }
                     }
-                    else if (key == "VisionPro.Blob")
+                    else if (key.StartsWith("VisionPro.Blob."))
                     {
-                        object raw; context.Data.TryGetValue(key, out raw);
-                        var res = raw as CogBlobResults;
+                        var res = context.Data[key] as CogBlobResults;
                         if (res != null)
                         {
+                            int bIdx = 0;
+                            int.TryParse(key.Substring("VisionPro.Blob.".Length), out bIdx);
                             var blobs = res.GetBlobs();
-                            sb.AppendLine("  Blob: " + blobs.Count + "개");
+                            sb.AppendLine("  Blob[" + bIdx + "]: " + blobs.Count + "개");
                             for (int j = 0; j < blobs.Count && j < 20; j++)
                             {
                                 var b = blobs[j] as CogBlobResult;
@@ -578,14 +853,16 @@ namespace Vision.UI
                 caliperKeyIdx++;
             }
 
-            object rawBlob;
-            if (context.Data.TryGetValue("VisionPro.Blob", out rawBlob))
+            int blobKeyIdx = 0;
+            foreach (var key in context.Data.Keys
+                .Where(k => k.StartsWith("VisionPro.Blob."))
+                .OrderBy(k => k))
             {
-                var blobResults = rawBlob as CogBlobResults;
+                var blobResults = context.Data[key] as CogBlobResults;
                 if (blobResults != null)
                 {
                     var blobs = blobResults.GetBlobs();
-                    sb.AppendLine("Blob: " + blobs.Count + "개 검출");
+                    sb.AppendLine("Blob[" + blobKeyIdx + "]: " + blobs.Count + "개 검출");
                     for (int i = 0; i < blobs.Count && i < 20; i++)
                     {
                         var b = blobs[i] as CogBlobResult;
@@ -596,6 +873,7 @@ namespace Vision.UI
                     }
                     if (blobs.Count > 20) sb.AppendLine("  ... (" + blobs.Count + "개 중 20개만 표시)");
                 }
+                blobKeyIdx++;
             }
 
             int distKeyIdx = 0;
@@ -623,10 +901,7 @@ namespace Vision.UI
 
         private void CommitAndSave()
         {
-            FlushCurrentPanel();
-            if (!string.IsNullOrWhiteSpace(txtPipelineName.Text))
-                _config.Name = txtPipelineName.Text.Trim();
-            _config.Steps = new List<IVisionStep>(PipelineSteps);
+            CommitCurrentToConfig();
             _pipelineManager.SaveAll();
         }
 
@@ -643,31 +918,10 @@ namespace Vision.UI
             catch (Exception ex) { txtTestResult.Text = "[저장 실패] " + ex.Message; }
         }
 
-        private void btnSavePipeline_Click(object sender, EventArgs e)
-        {
-            try
-            {
-                CommitAndSave();
-                txtTestResult.Text = "[저장 완료] 파이프라인 '" + _config.Name + "' ("
-                    + PipelineSteps.Count + "개 스텝)\r\n"
-                    + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "\r\n" + _pipelineManager.FilePath;
-            }
-            catch (Exception ex) { txtTestResult.Text = "[저장 실패] " + ex.Message; }
-        }
-
         // ── 확인 / 취소 ──────────────────────────────────────────────────
 
         private void btnOK_Click(object sender, EventArgs e)
         {
-            FlushCurrentPanel();
-            if (string.IsNullOrWhiteSpace(txtPipelineName.Text))
-            {
-                MessageBox.Show("파이프라인 이름을 입력하세요.", "알림",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                txtPipelineName.Focus();
-                return;
-            }
-
             var issues = new StringBuilder();
             for (int i = 1; i < PipelineSteps.Count; i++)
             {
@@ -686,6 +940,8 @@ namespace Vision.UI
                     return;
             }
 
+            ApplyAllStagedToConfigs();
+            _pipelineManager.SaveAll();
             DialogResult = DialogResult.OK;
             Close();
         }
@@ -694,6 +950,49 @@ namespace Vision.UI
         {
             DialogResult = DialogResult.Cancel;
             Close();
+        }
+    }
+
+    // WM_PAINT 후킹으로 드래그 삽입 위치 선을 안정적으로 유지하는 ListBox
+    internal class DragListBox : ListBox
+    {
+        private const int WM_PAINT = 0x000F;
+
+        public int InsertIndex { get; set; } = -1;
+
+        protected override void WndProc(ref Message m)
+        {
+            base.WndProc(ref m);
+            if (m.Msg == WM_PAINT && InsertIndex >= 0)
+                DrawInsertLine();
+        }
+
+        private void DrawInsertLine()
+        {
+            if (Items.Count == 0) return;
+
+            int y = InsertIndex >= Items.Count
+                ? GetItemRectangle(Items.Count - 1).Bottom
+                : GetItemRectangle(InsertIndex).Top;
+
+            using (var g   = CreateGraphics())
+            using (var pen = new Pen(Color.DodgerBlue, 2))
+            {
+                g.DrawLine(pen, 4, y, Width - 4, y);
+                // 양 끝 화살표 마커
+                g.FillPolygon(pen.Brush, new[]
+                {
+                    new Point(4,     y),
+                    new Point(10,    y - 4),
+                    new Point(10,    y + 4),
+                });
+                g.FillPolygon(pen.Brush, new[]
+                {
+                    new Point(Width - 4,  y),
+                    new Point(Width - 10, y - 4),
+                    new Point(Width - 10, y + 4),
+                });
+            }
         }
     }
 }
