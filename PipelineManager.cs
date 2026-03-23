@@ -144,9 +144,26 @@ namespace Vision
 
             XElement root;
             try   { root = XDocument.Load(FilePath).Root; }
-            catch { return; }  // 파일 파싱 실패 시 조용히 무시
+            catch { return; }
 
-            // active 속성에서 마지막으로 선택된 파이프라인 인덱스 복원
+            ParseFromElement(root, stepFactories);
+        }
+
+        /// <summary>
+        /// 인메모리 XElement에서 파이프라인 설정을 복원한다.
+        /// PipelineController가 Cancel 시 스냅샷 복원에 사용한다.
+        /// </summary>
+        public void LoadFromElement(XElement root,
+            IReadOnlyDictionary<string, Func<IVisionStep>> stepFactories)
+        {
+            _configs.Clear();
+            if (root == null) return;
+            ParseFromElement(root, stepFactories);
+        }
+
+        private void ParseFromElement(XElement root,
+            IReadOnlyDictionary<string, Func<IVisionStep>> stepFactories)
+        {
             _activeIndex = (int?)root.Attribute("active") ?? 0;
 
             foreach (var cfgEl in root.Elements("Pipeline"))
@@ -159,18 +176,15 @@ namespace Vision
                 {
                     string type = (string)stepEl.Attribute("type");
 
-                    // 알 수 없는 type은 건너뜀 (미등록 스텝, 플러그인 제거 등 대비)
                     Func<IVisionStep> factory;
                     if (type == null || !stepFactories.TryGetValue(type, out factory)) continue;
 
                     var step = factory();
 
-                    // label 속성이 있으면 표시 이름 복원
                     string label = (string)stepEl.Attribute("label");
                     if (!string.IsNullOrEmpty(label))
                         step.DisplayName = label;
 
-                    // IStepSerializable 구현 스텝은 저장된 파라미터를 복원
                     (step as IStepSerializable)?.LoadParams(stepEl);
                     cfg.Steps.Add(step);
                 }
@@ -178,7 +192,6 @@ namespace Vision
                 _configs.Add(cfg);
             }
 
-            // 저장된 인덱스가 로드된 목록 범위를 벗어나지 않도록 클램핑
             _activeIndex = Math.Max(0, Math.Min(_activeIndex, _configs.Count - 1));
         }
     }

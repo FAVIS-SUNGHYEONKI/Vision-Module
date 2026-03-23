@@ -3,39 +3,78 @@
 ## 역할
 
 VisionPro `CogCaliperTool`을 래핑하여 **에지(밝기 경계)를 검출**하는 스텝이다.
+`CogStepBase`를 상속하며 `IStepSerializable`, `IRegionStep`, `IInspectionStep`을 추가 구현한다.
 
-```csharp
-public class CogCaliperStep : CogStepBase, IStepSerializable, IRegionStep, IInspectionStep
+---
+
+## 클래스 계층
+
+```
+IVisionStep ──┐
+IImageTypedStep ┤
+               └─▶ CogStepBase
+                       └─▶ CogCaliperStep : IStepSerializable, IRegionStep, IInspectionStep
 ```
 
 ---
 
-## 주요 속성
+## CaliperSelectionMode 열거형
 
-| 속성 | 타입 | 역할 |
-|---|---|---|
-| `Name` | `string` | `"VisionPro.Caliper"` (결과 키 접두어 겸 XML type) |
-| `Region` | `CogRectangleAffine` | 스캔 영역. null이면 전체 이미지 |
-| `RunParams` | `CogCaliper` | 에지 검출 파라미터 |
-| `Tool` | `CogCaliperTool` | 내부 툴 인스턴스 (외부 주입 가능) |
-| `RegionRequired` | `bool` | `false` — Region 없이 전체 이미지 스캔 가능 |
+```csharp
+public enum CaliperSelectionMode
+{
+    All,        // 모든 에지 반환
+    FirstEdge,  // 스캔 방향 기준 첫 번째 에지 (기본값)
+    BestEdge,   // 대비(Contrast) 점수 가장 높은 에지
+}
+```
 
 ---
 
-## ExecuteCore — 실행
+## 주요 프로퍼티
+
+| 프로퍼티 | 설명 |
+|----------|------|
+| `Name` | `"VisionPro.Caliper"` |
+| `Tool` | 내부 `CogCaliperTool` 인스턴스 (외부 주입 가능) |
+| `RunParams` | `_tool.RunParams` — ContrastThreshold, EdgeMode 등 |
+| `Region` | `_tool.Region` (CogRectangleAffine). null이면 전체 이미지 스캔 |
+| `RegionRequired` | `false` (Region 없이도 실행 가능) |
+| `SelectionMode` | `CaliperSelectionMode`. 기본값 `FirstEdge` |
+
+---
+
+## ExecuteCore 동작
 
 ```csharp
 protected override void ExecuteCore(VisionContext context)
 {
+    _tool.RunParams.SingleEdgeScorers.Clear();
+    int savedMaxResults = _tool.RunParams.MaxResults;
+
+    if (SelectionMode == CaliperSelectionMode.FirstEdge)
+    {
+        // CogCaliperScorerPositionNeg: Position 작을수록 높은 점수 → 첫 에지 선택
+        _tool.RunParams.SingleEdgeScorers.Add(_firstEdgeScorer);
+        _tool.RunParams.MaxResults = 1;
+    }
+    else if (SelectionMode == CaliperSelectionMode.BestEdge)
+    {
+        // CogCaliperScorerContrast: 대비가 강할수록 높은 점수 → 최고 품질 에지 선택
+        _tool.RunParams.SingleEdgeScorers.Add(_bestEdgeScorer);
+        _tool.RunParams.MaxResults = 1;
+    }
+    // All이면 scorer 없음, MaxResults는 사용자 설정 그대로
+
     _tool.InputImage = context.CogImage;
     _tool.Run();
+    _tool.RunParams.MaxResults = savedMaxResults; // 원복
 
     if (_tool.Results != null && _tool.Results.Count > 0)
     {
         int idx = 0;
         while (context.Data.ContainsKey(Name + "." + idx)) idx++;
         context.Data[Name + "." + idx] = _tool.Results;
-
         if (Region != null)
             context.Data[Name + "." + idx + ".Region"] = Region;
     }
@@ -44,62 +83,24 @@ protected override void ExecuteCore(VisionContext context)
 }
 ```
 
-### 키 자동 증가 패턴
-
-동일 파이프라인에 Caliper 스텝이 여러 개 있을 때 충돌 방지:
-```
-첫 번째 스텝 → "VisionPro.Caliper.0"
-두 번째 스텝 → "VisionPro.Caliper.1"
-```
-
-### Region도 함께 저장하는 이유
-
-`CogCaliperDistanceStep`이 1D Position → 2D 이미지 좌표 변환 시 Region의 중심점과 회전각이 필요하다.
-
-```
-"VisionPro.Caliper.0"        → CogCaliperResults
-"VisionPro.Caliper.0.Region" → CogRectangleAffine
-```
+- Scorer 방식을 사용하므로 VisionPro 내부 평가 로직이 에지 선택에 활용됨
+- `MaxResults`를 실행 전 `1`로 강제 설정하고 실행 후 원복 (SelectionMode가 바뀌어도 사용자 설정 유지)
+- `Region`도 컨텍스트에 같이 저장하여 `CogCaliperDistanceStep`이 2D 좌표 변환 시 활용
 
 ---
 
 ## XML 직렬화 (IStepSerializable)
 
-### 저장 필드
+**저장 필드:**
 
-**Region:**
-- `CenterX`, `CenterY`, `SideXLength`, `SideYLength`, `Rotation`, `Skew`
+| 필드 | XML 경로 |
+|------|---------|
+| Region (CenterX, CenterY, SideXLength, SideYLength, Rotation, Skew) | `<Region>` |
+| ContrastThreshold | `<RunParams><ContrastThreshold>` |
+| EdgeMode | `<RunParams><EdgeMode>` |
+| Edge0Polarity | `<RunParams><Edge0Polarity>` |
+| FilterHalfSizeInPixels | `<RunParams><FilterHalfSizeInPixels>` |
+| MaxResults | `<RunParams><MaxResults>` |
+| SelectionMode | `<RunParams><SelectionMode>` |
 
-**RunParams:**
-- `ContrastThreshold`, `EdgeMode`, `Edge0Polarity`, `FilterHalfSizeInPixels`, `MaxResults`
-
-### InvariantCulture 사용 이유
-
-```csharp
-v.ToString("R", CultureInfo.InvariantCulture)
-```
-
-로케일에 따라 소수점 기호가 `.` 또는 `,`로 달라질 수 있다.
-`InvariantCulture`로 항상 `.`을 사용하여 파일 이식성을 보장한다.
-
-### 로드 시 기본값
-
-누락된 XML 요소는 기본값으로 대체된다:
-```
-ContrastThreshold = 15.0
-MaxResults        = 1
-EdgeMode          = 0 (Single)
-```
-
----
-
-## XML 헬퍼 메서드
-
-```csharp
-Xd(name, double)  // double → XElement (InvariantCulture)
-Xi(name, int)     // int    → XElement
-Rd(el, name, def) // XElement → double (실패 시 def)
-Ri(el, name, def) // XElement → int    (실패 시 def)
-```
-
-이 패턴은 `CogBlobStep`, `CvThresholdStep` 등 모든 직렬화 스텝에서 동일하게 사용한다.
+실수값은 `InvariantCulture`로 직렬화하여 로케일 독립성 보장.

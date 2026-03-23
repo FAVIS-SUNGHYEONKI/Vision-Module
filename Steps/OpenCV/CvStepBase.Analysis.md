@@ -3,76 +3,65 @@
 ## 역할
 
 OpenCV 기반 스텝의 **추상 기반 클래스**다.
-`CogImage`만 있을 때 자동으로 `Mat`으로 변환하여 하위 클래스가 항상 MatImage를 받도록 보장한다.
+`IVisionStep`과 `IImageTypedStep`을 구현하며, 자동 이미지 변환과 `DisplayName` 관리를 담당한다.
 
-```csharp
-public abstract class CvStepBase : IVisionStep, IImageTypedStep
+---
+
+## 클래스 구조
+
+```
+IVisionStep ──┐
+IImageTypedStep ─┤
+               └─▶ CvStepBase (abstract)
+                       └── CvThresholdStep
 ```
 
 ---
 
-## 자동 변환 로직 — Execute
+## 주요 멤버
+
+| 멤버 | 설명 |
+|------|------|
+| `abstract Name` | 하위 클래스에서 반드시 구현 |
+| `DisplayName` | 사용자 지정 표시 이름. 미설정 시 `Name` 반환 |
+| `ContinueOnFailure` | 기본 `false` |
+| `RequiredInputType` | 기본 `Any` (자동 변환으로 그레이/컬러 모두 허용) |
+| `ProducedOutputType` | 기본 `Grey` (OpenCV 스텝은 기본적으로 그레이 Mat 출력) |
+| `Execute(context)` | 자동 변환 후 `ExecuteCore` 호출 |
+| `abstract ExecuteCore(context)` | 실제 처리 로직. 하위 클래스 구현 |
+
+---
+
+## 자동 이미지 변환 로직 (`Execute`)
 
 ```csharp
 public void Execute(VisionContext context)
 {
+    // CogImage → Mat 자동 변환 (MatImage 없을 때만)
     if (context.MatImage == null && context.CogImage != null)
     {
         context.MatImage = ImageConverter.ToMat(context.CogImage);
         (context.CogImage as IDisposable)?.Dispose();
         context.CogImage = null;
     }
-
     ExecuteCore(context);
 }
 ```
 
-- `MatImage`가 이미 있으면 변환 없이 바로 `ExecuteCore()` 호출
-- `CogImage`만 있으면 변환 후 원본 CogImage 즉시 해제
-- `ExecuteCore()` 호출 시점에 `context.MatImage`는 반드시 유효하다.
-
-`ICogImage`는 `IDisposable`을 직접 구현하지 않으므로 캐스팅 후 해제한다.
+VisionPro 스텝 이후에 OpenCV 스텝이 바로 연결될 수 있다.
 
 ---
 
-## 추상 멤버
+## DisplayName 구현
 
+`CogStepBase`와 동일한 패턴:
 ```csharp
-public abstract string Name { get; }
-protected abstract void ExecuteCore(VisionContext context);
+private string _displayName;
+public string DisplayName
+{
+    get => string.IsNullOrEmpty(_displayName) ? Name : _displayName;
+    set => _displayName = value;
+}
 ```
 
----
-
-## 기본값
-
-| 속성 | 기본값 | 의미 |
-|---|---|---|
-| `ContinueOnFailure` | `false` | 실패 시 파이프라인 중단 |
-| `RequiredInputType` | `Any` | 자동 변환으로 모두 허용 |
-| `ProducedOutputType` | **`Grey`** | OpenCV 스텝은 기본적으로 그레이 Mat 출력 |
-
-`CogStepBase`와 달리 `ProducedOutputType`의 기본값이 `Grey`다.
-OpenCV 스텝들은 대부분 그레이스케일 Mat을 결과로 남기기 때문이다.
-
----
-
-## CogStepBase와 대칭 구조
-
-```
-CogStepBase.Execute:
-  MatImage → ToCogImage8Grey → CogImage  →  ExecuteCore
-
-CvStepBase.Execute:
-  CogImage → ToMat            → MatImage →  ExecuteCore
-```
-
-두 클래스는 변환 방향만 반대이고 나머지 구조는 동일하다.
-
----
-
-## 하위 클래스 목록
-
-| 클래스 | 기능 |
-|---|---|
-| `CvThresholdStep` | 이진화 (Threshold) |
+`IVisionStep.DisplayName` 계약을 이 클래스에서 구현한다.

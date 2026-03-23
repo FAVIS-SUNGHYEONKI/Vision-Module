@@ -176,6 +176,8 @@ namespace Vision.UI
             this.lstPipeline.SelectedIndexChanged  += new System.EventHandler(this.lstPipeline_SelectedIndexChanged);
             this.lstPipeline.DoubleClick           += new System.EventHandler(this.lstPipeline_DoubleClick);
             this.lstPipeline.MouseDown             += new System.Windows.Forms.MouseEventHandler(this.lstPipeline_MouseDown);
+            this.lstPipeline.MouseMove             += new System.Windows.Forms.MouseEventHandler(this.lstPipeline_MouseMove);
+            this.lstPipeline.MouseUp               += new System.Windows.Forms.MouseEventHandler(this.lstPipeline_MouseUp);
             this.lstPipeline.DragOver              += new System.Windows.Forms.DragEventHandler(this.lstPipeline_DragOver);
             this.lstPipeline.DragDrop              += new System.Windows.Forms.DragEventHandler(this.lstPipeline_DragDrop);
             this.lstPipeline.DragLeave             += new System.EventHandler(this.lstPipeline_DragLeave);

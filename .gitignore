@@ -64,3 +64,6 @@ nunit-*.xml
 
 # claude
 .claude/
+
+# Analysis files
+*.Analysis.md
