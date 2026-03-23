@@ -91,6 +91,8 @@ namespace Vision
             _stepDescriptors.Add(new StepDescriptor(
                 "ConvertGray (컬러→회색)", "Cognex", () => new CogConvertGray()));
             _stepDescriptors.Add(new StepDescriptor(
+                "WeightedRGB (가중 그레이)", "Cognex", () => new CogWeightedRGBStep()));
+            _stepDescriptors.Add(new StepDescriptor(
                 "Caliper (에지 검출)",      "Cognex", () => new CogCaliperStep()));
             _stepDescriptors.Add(new StepDescriptor(
                 "Blob (영역 검출)",          "Cognex", () => new CogBlobStep()));
@@ -131,6 +133,9 @@ namespace Vision
         {
             EnsureActivePipeline();
 
+            // 폼 열기 전 상태를 인메모리 XML로 스냅샷 — Cancel 시 복원 기준점
+            var snapshot = TakeSnapshot();
+
             using (var form = new PipelineEditorForm(
                 _stepDescriptors,
                 _manager,
@@ -140,10 +145,56 @@ namespace Vision
                 if (dr == DialogResult.OK)
                 {
                     _manager.ActiveIndex = form.SelectedPipelineIndex;
-                    RebuildPipeline();   // staged → real 반영 후 pipeline 재구성
+                    RebuildPipeline();
+                }
+                else
+                {
+                    // Cancel(또는 X) — 스냅샷으로 복원 후 파일에도 기록
+                    RestoreSnapshot(snapshot);
                 }
                 return dr;
             }
+        }
+
+        // ── 스냅샷 ───────────────────────────────────────────────────────
+
+        private System.Xml.Linq.XElement TakeSnapshot()
+        {
+            var root = new System.Xml.Linq.XElement("Pipelines",
+                new System.Xml.Linq.XAttribute("active", _manager.ActiveIndex));
+
+            foreach (var cfg in _manager.Configs)
+            {
+                var cfgEl   = new System.Xml.Linq.XElement("Pipeline",
+                    new System.Xml.Linq.XAttribute("name", cfg.Name));
+                var stepsEl = new System.Xml.Linq.XElement("Steps");
+
+                foreach (var step in cfg.Steps)
+                {
+                    var stepEl = new System.Xml.Linq.XElement("Step",
+                        new System.Xml.Linq.XAttribute("type", step.Name));
+                    if (step.DisplayName != step.Name)
+                        stepEl.Add(new System.Xml.Linq.XAttribute("label", step.DisplayName));
+                    (step as IStepSerializable)?.SaveParams(stepEl);
+                    stepsEl.Add(stepEl);
+                }
+
+                cfgEl.Add(stepsEl);
+                root.Add(cfgEl);
+            }
+
+            return root;
+        }
+
+        private void RestoreSnapshot(System.Xml.Linq.XElement snapshot)
+        {
+            var factories = new Dictionary<string, Func<IVisionStep>>();
+            foreach (var desc in _stepDescriptors)
+                factories[desc.TypeName] = desc.CreateStep;
+
+            _manager.LoadFromElement(snapshot, factories);
+            _manager.SaveAll();   // 폼에서 중간 저장된 파일도 이전 상태로 덮어씀
+            RebuildPipeline();
         }
 
         // ── 파이프라인 캐시 ──────────────────────────────────────────────

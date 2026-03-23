@@ -2,59 +2,59 @@
 
 ## 역할
 
-외부 앱이 사용하는 **단일 진입점(Facade)** 클래스다.
-Vision Module의 모든 기능을 하나의 인터페이스로 통합한다.
-
-```csharp
-public class PipelineController
-```
+외부 앱(Vision-GUI)이 사용하는 **단일 진입점(Facade)** 클래스다.
+파이프라인 편집 UI 표시, 파이프라인 실행, 결과 렌더링, 저장/로드를 하나의 API로 제공한다.
 
 ---
 
-## 내부 구성
+## 핵심 필드
 
-```csharp
-private readonly PipelineManager      _manager;
-private readonly List<StepDescriptor> _stepDescriptors;
-```
-
-- `_manager`: 파이프라인 저장/로드/관리
-- `_stepDescriptors`: 편집기 팔레트에 등록된 스텝 유형 목록
+| 필드 | 설명 |
+|------|------|
+| `_manager` | `PipelineManager` — 파이프라인 설정 저장/로드 관리 |
+| `_stepDescriptors` | 등록된 스텝 팔레트 목록 |
+| `_cachedPipeline` | `VisionPipeline` 캐시 — 스텝 구성이 변경될 때만 재생성 |
 
 ---
 
-## 생성자 — 기본 스텝 등록
+## VisionPipeline 캐싱
+
+초기 구조에서는 `RunAsync` 호출마다 `new VisionPipeline()`을 생성했다. 현재는 캐싱 구조로 변경됨.
 
 ```csharp
-public PipelineController(string configFolder)
+private VisionPipeline _cachedPipeline;
+
+private void RebuildPipeline()
 {
-    _manager = new PipelineManager(configFolder);
-    RegisterBuiltinSteps();
+    _cachedPipeline?.Dispose();
+    _cachedPipeline = new VisionPipeline();
+    foreach (var step in _manager.ActivePipeline?.Steps ?? ...)
+        _cachedPipeline.AddStep(step);
 }
 ```
 
-기본 제공 스텝:
+**`RebuildPipeline()`이 호출되는 시점:**
+1. `ActivePipelineIndex` setter — 파이프라인 전환 시
+2. `Load()` — XML에서 설정 복원 후
+3. `ShowEditor()` OK 반환 후 — staged → real 반영 후
 
-| 표시 이름 | 카테고리 | 스텝 클래스 |
-|---|---|---|
-| ConvertGray (컬러→회색) | Cognex | `CogConvertGray` |
-| Caliper (에지 검출) | Cognex | `CogCaliperStep` |
-| Blob (영역 검출) | Cognex | `CogBlobStep` |
-| CaliperDistance (거리 측정) | Cognex | `CogCaliperDistanceStep` |
-| Threshold (이진화) | OpenCV | `CvThresholdStep` |
-
-`RegisterStep()`으로 커스텀 스텝을 추가할 수 있다.
+**RunAsync 에서:**
+```csharp
+if (_cachedPipeline == null) RebuildPipeline();
+await _cachedPipeline.RunAsync(ctx);
+```
 
 ---
 
 ## ShowEditor
 
 ```csharp
-public DialogResult ShowEditor(IWin32Window owner = null, ICogImage inputImage = null)
+public DialogResult ShowEditor(IWin32Window owner, ICogImage inputImage)
 ```
 
-- `EnsureActivePipeline()`: 파이프라인이 없으면 "기본 파이프라인" 자동 생성
-- `PipelineEditorForm`을 모달로 열고 OK 시 활성 인덱스를 갱신
+- `PipelineEditorForm`을 다이얼로그로 열어 스텝 구성 편집
+- OK 반환 시: `_manager.ActiveIndex = form.SelectedPipelineIndex` + `RebuildPipeline()`
+- 편집 내용은 폼 안에서 `_stagedByPipeline`에 보관되다가 OK 시 실제 `_config.Steps`에 반영되고 `pipelines.xml`로 저장됨
 
 ---
 
@@ -64,94 +64,39 @@ public DialogResult ShowEditor(IWin32Window owner = null, ICogImage inputImage =
 public async Task<VisionResult> RunAsync(ICogImage image)
 ```
 
-실행 흐름:
-```
-1. 활성 파이프라인이 없거나 스텝이 없으면 → VisionResult.Empty 반환
-
-2. PipelineConfig.Steps → VisionPipeline에 AddStep()
-
-3. using (var ctx = new VisionContext { CogImage = image })
-    await vp.RunAsync(ctx)
-    return VisionResult.FromContext(ctx, pipeline.Steps)
-```
-
-`using`으로 `VisionContext`를 감싸므로 실행 후 이미지 메모리가 자동 해제된다.
+- 파이프라인이 없거나 비어 있으면 `VisionResult.Empty` 반환
+- `_cachedPipeline`을 재사용 (매번 생성 안 함)
+- `VisionContext`는 매 실행마다 새로 생성하고 `using`으로 자동 해제
 
 ---
 
-## 파라미터 패널 관련 메서드
+## 파이프라인 CRUD
 
-| 메서드 | 역할 |
-|---|---|
-| `GetParamPanel(step)` | 스텝에 맞는 UserControl 반환 + BindStep 호출 |
-| `ApplyParamPanel(step, panel)` | `panel.FlushStep(step)` — 메모리 반영만 |
-| `ApplyAndSave(step, panel)` | `FlushStep()` + `SaveAll()` |
-
-사용 패턴:
-```csharp
-var ctrl  = controller.GetParamPanel(step);
-var panel = (IStepParamPanel)ctrl;
-myGroupBox.Controls.Add(ctrl);
-
-// 적용만
-controller.ApplyParamPanel(step, panel);
-
-// 적용 + 저장
-controller.ApplyAndSave(step, panel);
-```
+| 메서드 | 설명 |
+|--------|------|
+| `AddPipeline(name)` | 새 파이프라인 추가 |
+| `DuplicateActivePipeline(newName)` | 활성 파이프라인 deep copy (IStepSerializable 경유) |
+| `RemovePipeline(index)` | 삭제. 마지막 하나이면 `false` 반환 |
+| `RenamePipeline(index, newName)` | 이름 변경 |
 
 ---
 
-## 다중 파이프라인 관리
+## 파라미터 패널 API
 
-### DuplicateActivePipeline — 깊은 복사
-
-```csharp
-// XML을 중간 매개체로 사용하여 파라미터까지 완전히 복사
-var el = new XElement("Step");
-srcSerial.SaveParams(el);
-dstSerial.LoadParams(el);
-```
-
-직접 참조를 복사하지 않고 XML 직렬화/역직렬화를 거쳐 완전히 독립된 복사본을 만든다.
-
-### RemovePipeline
-
-```csharp
-public bool RemovePipeline(int index)
-{
-    if (_manager.Configs.Count <= 1) return false;  // 마지막 하나는 삭제 불가
-    _manager.RemoveAt(index);
-    return true;
-}
-```
+| 메서드 | 설명 |
+|--------|------|
+| `GetParamPanel(step)` | `StepParamPanelFactory`로 패널 생성 + `BindStep` 호출 |
+| `ApplyParamPanel(step, panel)` | 패널 값을 스텝에 반영 (디스크 저장 안 함) |
+| `ApplyAndSave(step, panel)` | 반영 + `SaveAll()` |
 
 ---
 
-## 전체 API 요약
+## 기본 스텝 등록 (`RegisterBuiltinSteps`)
 
-```csharp
-// 초기화
-var controller = new PipelineController(@"C:\config");
-controller.Load();
-
-// 편집
-controller.ShowEditor(this, image);
-controller.Save();
-
-// 실행
-var result = await controller.RunAsync(image);
-
-// 결과 표시
-controller.DrawResults(display, result);
-
-// 파라미터 편집 (외부 앱)
-var ctrl = controller.GetParamPanel(step);
-controller.ApplyAndSave(step, (IStepParamPanel)ctrl);
-
-// 파이프라인 관리
-controller.AddPipeline("새 파이프라인");
-controller.DuplicateActivePipeline();
-controller.RemovePipeline(index);
-controller.RenamePipeline(index, "새 이름");
-```
+| 표시 이름 | 카테고리 | 스텝 클래스 |
+|-----------|----------|------------|
+| ConvertGray (컬러→회색) | Cognex | `CogConvertGray` |
+| Caliper (에지 검출) | Cognex | `CogCaliperStep` |
+| Blob (영역 검출) | Cognex | `CogBlobStep` |
+| CaliperDistance (거리 측정) | Cognex | `CogCaliperDistanceStep` |
+| Threshold (이진화) | OpenCV | `CvThresholdStep` |

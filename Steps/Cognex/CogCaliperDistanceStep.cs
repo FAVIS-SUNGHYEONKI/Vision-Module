@@ -31,6 +31,14 @@ namespace Vision.Steps.VisionPro
         /// <summary>스텝 고유 이름.</summary>
         public string Name => "VisionPro.CaliperDistance";
 
+        private string _displayName;
+        /// <summary>사용자 지정 표시 이름. 설정하지 않으면 Name을 반환한다.</summary>
+        public string DisplayName
+        {
+            get => string.IsNullOrEmpty(_displayName) ? Name : _displayName;
+            set => _displayName = value;
+        }
+
         /// <summary>이미지를 사용하지 않으므로 어떤 타입도 허용한다.</summary>
         public bool ContinueOnFailure => false;
 

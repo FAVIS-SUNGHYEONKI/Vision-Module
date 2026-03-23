@@ -186,6 +186,7 @@ namespace Vision.UI
                     srcSerial.SaveParams(el);
                     dstSerial.LoadParams(el);
                 }
+                newStep.DisplayName = step.DisplayName;
                 result.Add(newStep);
             }
             return result;
@@ -386,15 +387,36 @@ namespace Vision.UI
 
         // ── 스텝 드래그&드롭 순서 변경 ──────────────────────────────────
 
-        private int _dragFromIdx   = -1;
-        private int _dragInsertIdx = -1;
+        private int   _dragFromIdx    = -1;
+        private int   _dragInsertIdx  = -1;
+        private Point _dragStartPoint;
+        private bool  _dragPending;
 
         private void lstPipeline_MouseDown(object sender, MouseEventArgs e)
         {
+            if (e.Button != MouseButtons.Left) return;
             int idx = lstPipeline.IndexFromPoint(e.Location);
-            if (idx < 0) return;
-            _dragFromIdx = idx;
-            lstPipeline.DoDragDrop(idx, DragDropEffects.Move);
+            if (idx < 0) { _dragPending = false; return; }
+            _dragFromIdx    = idx;
+            _dragStartPoint = e.Location;
+            _dragPending    = true;
+        }
+
+        private void lstPipeline_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_dragPending || e.Button != MouseButtons.Left) return;
+            var sz = SystemInformation.DragSize;
+            if (Math.Abs(e.X - _dragStartPoint.X) > sz.Width  / 2 ||
+                Math.Abs(e.Y - _dragStartPoint.Y) > sz.Height / 2)
+            {
+                _dragPending = false;
+                lstPipeline.DoDragDrop(_dragFromIdx, DragDropEffects.Move);
+            }
+        }
+
+        private void lstPipeline_MouseUp(object sender, MouseEventArgs e)
+        {
+            _dragPending = false;
         }
 
         private void lstPipeline_DragOver(object sender, DragEventArgs e)
@@ -518,6 +540,10 @@ namespace Vision.UI
             var blobPanel = ctrl as CogBlobParamPanel;
             if (blobPanel != null)
                 blobPanel.PreviewRequested += async (s, ev) =>
+                    await RunStepTestAsync(_currentPanelStepIdx);
+
+            if (ctrl is CogWeightedRGBParamPanel weightedRGBPanel)
+                weightedRGBPanel.PreviewRequested += async (s, ev) =>
                     await RunStepTestAsync(_currentPanelStepIdx);
 
             ctrl.Location = new Point(10, 20);
@@ -819,7 +845,7 @@ namespace Vision.UI
         private void ShowTestResult(VisionContext context, IVisionStep step)
         {
             cogTestDisplay.StaticGraphics.Clear();
-            if (context.CogImage != null) { cogTestDisplay.Image = context.CogImage; cogTestDisplay.Fit(true); }
+            if (context.CogImage != null) cogTestDisplay.Image = context.CogImage;
 
             var sb = new StringBuilder();
             if (!context.IsSuccess)
@@ -912,7 +938,8 @@ namespace Vision.UI
             try
             {
                 CommitAndSave();
-                txtTestResult.Text = "[저장 완료] " + PipelineSteps[idx].Name + "\r\n"
+                RefreshPipelineList(idx);
+                txtTestResult.Text = "[저장 완료] " + PipelineSteps[idx].DisplayName + "\r\n"
                     + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "\r\n" + _pipelineManager.FilePath;
             }
             catch (Exception ex) { txtTestResult.Text = "[저장 실패] " + ex.Message; }
