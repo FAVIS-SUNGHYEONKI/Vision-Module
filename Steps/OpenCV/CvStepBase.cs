@@ -63,8 +63,6 @@ namespace Vision.Steps.OpenCV
             if (context.MatImage == null && context.CogImage != null)
             {
                 context.MatImage = ImageConverter.ToMat(context.CogImage);
-                // 변환 원본 CogImage는 더 이상 필요 없으므로 해제
-                (context.CogImage as IDisposable)?.Dispose();
                 context.CogImage = null;
             }
 

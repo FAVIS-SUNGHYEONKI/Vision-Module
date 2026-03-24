@@ -52,7 +52,6 @@ namespace Vision.Steps.OpenCV
             // 원본 Mat 해제 후 결과로 교체
             context.MatImage.Dispose();
             context.MatImage = result;
-            (context.CogImage as System.IDisposable)?.Dispose();
             context.CogImage = null;
         }
 

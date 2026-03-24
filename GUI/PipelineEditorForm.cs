@@ -201,9 +201,23 @@ namespace Vision.UI
 
         // ── 파이프라인 CRUD ──────────────────────────────────────────────
 
+        private bool IsPipelineNameTaken(string name, PipelineConfig exclude = null)
+        {
+            foreach (var cfg in _pipelineManager.Configs)
+                if (cfg != exclude && string.Equals(cfg.Name, name, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            return false;
+        }
+
         private void btnNewPl_Click(object sender, EventArgs e)
         {
             string name = ShowInputDialog("새 파이프라인", "파이프라인 이름:", "새 파이프라인");
+            while (name != null && IsPipelineNameTaken(name))
+            {
+                MessageBox.Show("\"" + name + "\" 이름의 파이프라인이 이미 존재합니다.\n다른 이름을 입력하세요.",
+                    "중복 이름", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                name = ShowInputDialog("새 파이프라인", "파이프라인 이름:", name);
+            }
             if (name == null) return;
             StashCurrentStaged();
             _pipelineManager.Add(new PipelineConfig { Name = name });
@@ -215,6 +229,12 @@ namespace Vision.UI
         {
             StashCurrentStaged();
             string name = ShowInputDialog("파이프라인 복제", "복제할 이름:", _config.Name + " (복사본)");
+            while (name != null && IsPipelineNameTaken(name))
+            {
+                MessageBox.Show("\"" + name + "\" 이름의 파이프라인이 이미 존재합니다.\n다른 이름을 입력하세요.",
+                    "중복 이름", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                name = ShowInputDialog("파이프라인 복제", "복제할 이름:", name);
+            }
             if (name == null) return;
 
             // _config.Steps가 아닌 staged(PipelineSteps)를 복제 기준으로 사용
@@ -234,6 +254,9 @@ namespace Vision.UI
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+            if (MessageBox.Show("\"" + _config.Name + "\" 파이프라인을 삭제하시겠습니까?", "삭제 확인",
+                    MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+                return;
             int removeIdx = _currentPipelineIdx;
 
             // staged dict 인덱스 재정렬 (삭제된 인덱스 이후 항목을 -1 시프트)
@@ -254,6 +277,13 @@ namespace Vision.UI
         {
             string cur  = _config.Name;
             string name = ShowInputDialog("이름 변경", "새 이름:", cur);
+            if (name == null || name == cur) return;
+            while (name != null && IsPipelineNameTaken(name, _config))
+            {
+                MessageBox.Show("\"" + name + "\" 이름의 파이프라인이 이미 존재합니다.\n다른 이름을 입력하세요.",
+                    "중복 이름", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                name = ShowInputDialog("이름 변경", "새 이름:", name);
+            }
             if (name == null || name == cur) return;
             _config.Name = name;
             RefreshPipelineComboInEditor();
@@ -465,8 +495,8 @@ namespace Vision.UI
 
         private void AddSelectedStep(object sender, EventArgs e)
         {
-            var desc = (lstCognex.SelectedItem as StepDescriptor)
-                    ?? (lstOpenCV.SelectedItem as StepDescriptor);
+            var list = sender as ListBox;
+            var desc = list?.SelectedItem as StepDescriptor;
             if (desc == null) return;
 
             FlushCurrentPanel();
@@ -663,6 +693,7 @@ namespace Vision.UI
 
             var step = PipelineSteps[stepIdx];
             UpdateDisplayForStep(step);
+            cogTestDisplay.Fit(false);
             var ctrl = StepParamPanelFactory.Create(step);
 
             if (ctrl == null)
@@ -716,7 +747,23 @@ namespace Vision.UI
 
             // Image Processing Tool: 초기 선택 시 자동 미리보기 실행 → 변환 결과를 display에 표시
             if (_inputImage != null && GetOutputType(step) != ImageType.Any)
+            {
                 _ = RunStepTestAsync(stepIdx);
+            }
+            // 검사 Tool: InputImageKey가 처리 스텝 출력("image:N")을 참조하고 캐시에 없으면
+            // 해당 처리 스텝을 자동 실행하여 display를 올바른 입력 이미지로 갱신
+            else if (_inputImage != null && GetOutputType(step) == ImageType.Any)
+            {
+                var inputKey = GetStepInputImageKey(step);
+                int refStepIdx;
+                if (inputKey != null && inputKey.StartsWith("image:") &&
+                    int.TryParse(inputKey.Substring("image:".Length), out refStepIdx) &&
+                    refStepIdx >= 0 &&
+                    (_lastRunContext == null || !_lastRunContext.Images.ContainsKey(inputKey)))
+                {
+                    _ = RunProcessingForInspectionAsync(refStepIdx, step);
+                }
+            }
         }
 
         private void FlushCurrentPanel()
@@ -795,7 +842,6 @@ namespace Vision.UI
             cogTestDisplay.StaticGraphics.Clear();
             cogTestDisplay.InteractiveGraphics.Clear();
             cogTestDisplay.Image = displayImage;
-            cogTestDisplay.Fit(false);
 
             // ── Region이 있으면 InteractiveGraphics에 표시 (드래그 가능) ──
             var regionStep = step as IRegionStep;
@@ -865,6 +911,12 @@ namespace Vision.UI
             if (idx < 0 || _inputImage == null) return;
             FlushCurrentPanel();
             await RunStepTestAsync(idx);
+        }
+
+        private async Task RunProcessingForInspectionAsync(int processingStepIdx, IVisionStep inspectionStep)
+        {
+            await RunStepTestAsync(processingStepIdx);
+            UpdateDisplayForStep(inspectionStep);
         }
 
         private bool _previewRunning;
@@ -976,7 +1028,7 @@ namespace Vision.UI
             totalSw.Stop();
             _lastRunContext = context;
             cogTestDisplay.StaticGraphics.Clear();
-            if (context.CogImage != null) cogTestDisplay.Image = context.CogImage;
+            cogTestDisplay.Image = _inputImage;
 
             double totalMs = totalSw.Elapsed.TotalMilliseconds;
             string totalTimeStr = totalMs >= 1000

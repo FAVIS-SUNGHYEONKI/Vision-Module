@@ -45,6 +45,12 @@ namespace Vision
         private readonly List<StepDescriptor> _stepDescriptors = new List<StepDescriptor>();
         private          VisionPipeline       _cachedPipeline;
 
+        /// <summary>현재 로드된 입력 이미지. GetParamPanel의 입력 이미지 목록 구성에 사용.</summary>
+        public ICogImage InputImage { get; private set; }
+
+        /// <summary>파라미터 패널 입력 이미지 목록 구성을 위해 로드된 이미지를 등록한다.</summary>
+        public void SetInputImage(ICogImage image) { InputImage = image; }
+
         // ── 공개 속성 ────────────────────────────────────────────────────
 
         /// <summary>현재 활성 파이프라인의 스텝 목록 (읽기 전용).</summary>
@@ -288,8 +294,75 @@ namespace Vision
         public Control GetParamPanel(IVisionStep step)
         {
             var ctrl = StepParamPanelFactory.Create(step);
+
+            var imageSelectable = ctrl as Vision.UI.IInputImageSelectable;
+            if (imageSelectable != null)
+            {
+                int stepIdx       = IndexOfStep(step);
+                var requiredType  = (step as IImageTypedStep)?.RequiredInputType ?? ImageType.Any;
+                var available     = BuildAvailableInputImages(stepIdx, requiredType);
+                imageSelectable.SetAvailableInputImages(available);
+            }
+
             (ctrl as Vision.UI.IStepParamPanel)?.BindStep(step);
             return ctrl;
+        }
+
+        private int IndexOfStep(IVisionStep step)
+        {
+            var steps = Steps;
+            for (int i = 0; i < steps.Count; i++)
+                if (steps[i] == step) return i;
+            return -1;
+        }
+
+        private List<Vision.UI.ImageSourceEntry> BuildAvailableInputImages(int stepIdx, ImageType requiredType)
+        {
+            var result     = new List<Vision.UI.ImageSourceEntry>();
+            var inputType  = InputImage is CogImage24PlanarColor ? ImageType.Color : ImageType.Grey;
+
+            void AddEntry(string key, ImageType type, string label)
+            {
+                if (requiredType != ImageType.Any && type != ImageType.Any && type != requiredType) return;
+                result.Add(new Vision.UI.ImageSourceEntry { Key = key, Type = type, Label = label });
+            }
+
+            void AddWithChannels(string key, ImageType type, string label)
+            {
+                AddEntry(key, type, label);
+                if (type == ImageType.Color)
+                {
+                    AddEntry(key + ".Red",   ImageType.Grey, label + " — Red");
+                    AddEntry(key + ".Green", ImageType.Grey, label + " — Green");
+                    AddEntry(key + ".Blue",  ImageType.Grey, label + " — Blue");
+                }
+            }
+
+            AddWithChannels("image:-1", inputType, "원본 이미지");
+
+            var steps = Steps;
+            for (int i = 0; i < stepIdx && i < steps.Count; i++)
+            {
+                var s       = steps[i];
+                var outType = (s as IImageTypedStep)?.ProducedOutputType ?? ImageType.Any;
+                if (outType == ImageType.Any) continue;
+
+                string label = "[Step " + (i + 1) + "] " + s.DisplayName;
+                string key   = "image:" + i;
+
+                if (s is IMultiChannelStep)
+                {
+                    AddEntry(key + ".Red",   ImageType.Grey, label + " — Red");
+                    AddEntry(key + ".Green", ImageType.Grey, label + " — Green");
+                    AddEntry(key + ".Blue",  ImageType.Grey, label + " — Blue");
+                }
+                else
+                {
+                    AddWithChannels(key, outType, label);
+                }
+            }
+
+            return result;
         }
 
         /// <summary>
@@ -314,6 +387,123 @@ namespace Vision
         {
             panel?.FlushStep(step);
             _manager.SaveAll();
+        }
+
+        // ── 스텝 입력 이미지 ─────────────────────────────────────────────
+
+        /// <summary>
+        /// 지정한 타입의 N번째 스텝에 설정된 입력 이미지를 반환한다.
+        ///
+        /// InputImageKey가 원본 이미지 계열("image:-1", "image:-1.Red/Green/Blue")이면
+        /// 파이프라인 실행 없이 즉시 반환한다.
+        /// InputImageKey가 처리 스텝 출력("image:N")을 가리키면
+        /// 해당 이미지가 생성되기까지의 처리 스텝들을 순서대로 실행한 뒤 반환한다.
+        ///
+        /// 사용 예:
+        ///   _controller.SetInputImage(image);
+        ///   var img = _controller.GetStepInputImage&lt;CogCaliperStep&gt;(0);
+        ///   var img = _controller.GetStepInputImage&lt;CogBlobStep&gt;(1);
+        /// </summary>
+        /// <typeparam name="T">입력 이미지를 조회할 스텝 타입.</typeparam>
+        /// <param name="index">해당 타입 스텝의 순서 인덱스 (0-based).</param>
+        /// <returns>
+        /// 스텝의 입력 이미지.
+        /// index 범위 초과 또는 InputImage 미설정 시 null.
+        /// </returns>
+        public ICogImage GetStepInputImage<T>(int index) where T : class, IVisionStep
+        {
+            if (InputImage == null) return null;
+
+            // 대상 스텝 탐색
+            int count = 0;
+            IVisionStep targetStep = null;
+            foreach (var step in Steps)
+            {
+                if (!(step is T)) continue;
+                if (count++ != index) continue;
+                targetStep = step;
+                break;
+            }
+            if (targetStep == null) return null;
+
+            var key = GetInputImageKey(targetStep);
+
+            // 원본 이미지 계열 → 실행 없이 즉시 반환
+            var direct = ResolveStaticInputImage(key);
+            if (direct != null) return direct;
+
+            // "image:N" → 의존성 체인만 추적하여 필요한 스텝만 실행
+            int refStepIdx;
+            if (!TryParseStepImageKey(key, out refStepIdx)) return null;
+
+            var context = new VisionContext { CogImage = InputImage };
+            context.RegisterImage("image:-1", InputImage);
+            var colorSrc = InputImage as CogImage24PlanarColor;
+            if (colorSrc != null) context.OriginalColorImage = colorSrc;
+
+            // 필요한 스텝 인덱스만 수집 후 순서대로 실행
+            var required = new System.Collections.Generic.SortedSet<int>();
+            CollectRequiredSteps(refStepIdx, required);
+
+            var steps = Steps;
+            foreach (int i in required)
+            {
+                context.CurrentStepIndex = i;
+                steps[i].Execute(context);
+                if (!context.IsSuccess && !steps[i].ContinueOnFailure) break;
+            }
+
+            ICogImage result;
+            context.Images.TryGetValue(key, out result);
+            return result;
+        }
+
+        /// <summary>stepIdx 스텝의 출력을 생성하는 데 필요한 스텝 인덱스를 재귀적으로 수집한다.</summary>
+        private void CollectRequiredSteps(int stepIdx, System.Collections.Generic.SortedSet<int> required)
+        {
+            var steps = Steps;
+            if (stepIdx < 0 || stepIdx >= steps.Count) return;
+            if (required.Contains(stepIdx)) return;
+            if (steps[stepIdx] is IInspectionStep) return;
+
+            required.Add(stepIdx);
+
+            // 이 스텝의 InputImageKey가 다른 스텝 출력을 참조하면 재귀적으로 추적
+            int depIdx;
+            if (TryParseStepImageKey(GetInputImageKey(steps[stepIdx]), out depIdx))
+                CollectRequiredSteps(depIdx, required);
+        }
+
+        private static string GetInputImageKey(IVisionStep step)
+        {
+            var cogStep = step as CogStepBase;
+            if (cogStep != null) return cogStep.InputImageKey;
+            var cvStep = step as CvStepBase;
+            if (cvStep != null) return cvStep.InputImageKey;
+            return null;
+        }
+
+        private ICogImage ResolveStaticInputImage(string key)
+        {
+            if (string.IsNullOrEmpty(key) || key == "image:-1")
+                return InputImage;
+
+            var colorImg = InputImage as CogImage24PlanarColor;
+            if (colorImg != null)
+            {
+                if (key == "image:-1.Red")   return colorImg.GetPlane(CogImagePlaneConstants.Red);
+                if (key == "image:-1.Green") return colorImg.GetPlane(CogImagePlaneConstants.Green);
+                if (key == "image:-1.Blue")  return colorImg.GetPlane(CogImagePlaneConstants.Blue);
+            }
+
+            return null;
+        }
+
+        private static bool TryParseStepImageKey(string key, out int stepIdx)
+        {
+            stepIdx = -1;
+            if (string.IsNullOrEmpty(key) || !key.StartsWith("image:")) return false;
+            return int.TryParse(key.Substring("image:".Length), out stepIdx) && stepIdx >= 0;
         }
 
         // ── 저장 / 로드 ──────────────────────────────────────────────────
