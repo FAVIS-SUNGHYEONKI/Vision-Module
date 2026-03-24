@@ -35,14 +35,25 @@ namespace Vision.Steps.VisionPro
         /// <summary>출력 이미지 타입. 기본값 Any (이미지를 변환하지 않음).</summary>
         public virtual ImageType ProducedOutputType => ImageType.Any;
 
+        /// <summary>
+        /// 입력 이미지 키. VisionContext.Images 에서 해당 키의 이미지를 사용한다.
+        /// null/비어있으면 context.CogImage (이전 스텝 출력)를 그대로 사용한다.
+        /// 예: "image:-1.Green" = 원본 Green 채널,  "image:2" = 3번째 스텝 출력
+        /// </summary>
+        public string InputImageKey { get; set; } = null;
 
         /// <summary>
-        /// 스텝을 실행한다. OpenCV Mat만 있는 경우 CogImage8Grey로 자동 변환 후
+        /// 스텝을 실행한다. InputImageKey가 설정된 경우 해당 이미지로 교체하고,
+        /// OpenCV Mat만 있는 경우 CogImage8Grey로 자동 변환 후
         /// <see cref="ExecuteCore"/>를 호출한다.
         /// </summary>
         /// <param name="context">공유 파이프라인 컨텍스트</param>
         public void Execute(VisionContext context)
         {
+            // InputImageKey가 설정되어 있으면 해당 이미지를 CogImage로 교체
+            if (!string.IsNullOrEmpty(InputImageKey))
+                context.CogImage = context.GetInputImage(InputImageKey);
+
             // CvImage → VpImage 자동 변환 (VpImage가 없을 때만)
             if (context.CogImage == null && context.MatImage != null)
             {

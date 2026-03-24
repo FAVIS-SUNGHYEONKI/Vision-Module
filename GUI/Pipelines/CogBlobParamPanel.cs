@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
 using Vision.Steps.VisionPro;
@@ -10,11 +11,14 @@ namespace Vision.UI
     /// CogBlobStep의 파라미터를 편집하는 UserControl.
     /// 임계값 트랙바 조작 시 PreviewRequested 이벤트를 발생시켜 실시간 미리보기를 지원합니다.
     /// </summary>
-    public class CogBlobParamPanel : UserControl, IStepParamPanel
+    public class CogBlobParamPanel : UserControl, IStepParamPanel, IInputImageSelectable
     {
         private ComboBox      _cmbMode;
         private ComboBox      _cmbPolarity;
         private NumericUpDown _nudMinPixels;
+        private ComboBox      _cmbInputImage;
+
+        private readonly List<ImageSourceEntry> _inputImages = new List<ImageSourceEntry>();
 
         private Label    _lblHardThresh;
         private TrackBar _trkHardThresh;
@@ -129,6 +133,16 @@ namespace Vision.UI
                 Value    = 1,
             };
             Controls.Add(_nudMinPixels);
+            y += RowH;
+
+            AddLabel("입력 이미지:", LblX, y + 4, LblW);
+            _cmbInputImage = new ComboBox
+            {
+                Location      = new Point(ComboX, y),
+                Size          = new Size(ComboW + 40, 21),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+            };
+            Controls.Add(_cmbInputImage);
 
             Size = new Size(362, y + 44);
             UpdateThresholdVisibility();
@@ -183,6 +197,16 @@ namespace Vision.UI
             PreviewRequested?.Invoke(this, EventArgs.Empty);
         }
 
+        // ── IInputImageSelectable ────────────────────────────────────────
+
+        public void SetAvailableInputImages(IReadOnlyList<ImageSourceEntry> images)
+        {
+            _inputImages.Clear();
+            _inputImages.AddRange(images);
+            _cmbInputImage.Items.Clear();
+            foreach (var e in _inputImages) _cmbInputImage.Items.Add(e);
+        }
+
         // ── IStepParamPanel ──────────────────────────────────────────────
 
         public void BindStep(IVisionStep step)
@@ -204,6 +228,13 @@ namespace Vision.UI
                 _trkSoftHigh.Value    = Clamp((int)seg.SoftFixedThresholdHigh, 0, 255);
                 _lblSoftHighVal.Text  = _trkSoftHigh.Value.ToString();
                 _nudMinPixels.Value   = Clamp(_boundStep.RunParams.ConnectivityMinPixels, 1, 999999);
+
+                _cmbInputImage.SelectedIndex = -1;
+                for (int i = 0; i < _inputImages.Count; i++)
+                {
+                    if (_inputImages[i].Key == _boundStep.InputImageKey)
+                    { _cmbInputImage.SelectedIndex = i; break; }
+                }
                 UpdateThresholdVisibility();
             }
             finally { _binding = false; }
@@ -222,6 +253,8 @@ namespace Vision.UI
             seg.SoftFixedThresholdLow  = _trkSoftLow.Value;
             seg.SoftFixedThresholdHigh = _trkSoftHigh.Value;
             s.RunParams.ConnectivityMinPixels = (int)_nudMinPixels.Value;
+            int ii = _cmbInputImage.SelectedIndex;
+            s.InputImageKey = (ii >= 0 && ii < _inputImages.Count) ? _inputImages[ii].Key : null;
         }
 
         private static int Clamp(int v, int min, int max)     => v < min ? min : v > max ? max : v;

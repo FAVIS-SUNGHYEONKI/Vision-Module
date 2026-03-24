@@ -50,6 +50,9 @@ namespace Vision.Steps.VisionPro
         /// <summary>스텝 고유 이름. VisionContext.Data 키 접두어로 사용된다.</summary>
         public override string Name => "VisionPro.Caliper";
 
+        /// <summary>Grey 이미지 필요. 앞 스텝(ConvertGrey 또는 다른 이미지 처리 스텝)이 Grey를 출력해야 한다.</summary>
+        public override ImageType RequiredInputType => ImageType.Grey;
+
         /// <summary>
         /// 내부 CogCaliperTool 인스턴스.
         /// 외부에서 미리 구성된 Tool을 주입할 때 사용한다.
@@ -148,7 +151,8 @@ namespace Vision.Steps.VisionPro
                 Xi("Edge0Polarity",          (int)RunParams.Edge0Polarity),
                 Xi("FilterHalfSizeInPixels", RunParams.FilterHalfSizeInPixels),
                 Xi("MaxResults",             RunParams.MaxResults),
-                Xi("SelectionMode",          (int)SelectionMode)));
+                Xi("SelectionMode",          (int)SelectionMode),
+                new System.Xml.Linq.XElement("InputImageKey", InputImageKey ?? "")));
         }
 
         /// <summary>
@@ -179,6 +183,8 @@ namespace Vision.Steps.VisionPro
             RunParams.FilterHalfSizeInPixels = Ri(p, "FilterHalfSizeInPixels", 2);
             RunParams.MaxResults             = Ri(p, "MaxResults",             1);
             SelectionMode                    = (CaliperSelectionMode)          Ri(p, "SelectionMode",         0);
+            var keyEl = p.Element("InputImageKey");
+            InputImageKey = keyEl != null && !string.IsNullOrEmpty(keyEl.Value) ? keyEl.Value : null;
         }
 
         // ── XML 헬퍼 ─────────────────────────────────────────────────────

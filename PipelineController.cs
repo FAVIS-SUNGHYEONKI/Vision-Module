@@ -89,7 +89,7 @@ namespace Vision
         private void RegisterBuiltinSteps()
         {
             _stepDescriptors.Add(new StepDescriptor(
-                "ConvertGray (컬러→회색)", "Cognex", () => new CogConvertGray()));
+                "ConvertGrey (컬러→회색)", "Cognex", () => new CogConvertGrey()));
             _stepDescriptors.Add(new StepDescriptor(
                 "WeightedRGB (가중 그레이)", "Cognex", () => new CogWeightedRGBStep()));
             _stepDescriptors.Add(new StepDescriptor(

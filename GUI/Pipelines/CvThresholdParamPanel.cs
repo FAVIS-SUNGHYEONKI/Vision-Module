@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
 using Vision.Steps.OpenCV;
@@ -9,11 +10,14 @@ namespace Vision.UI
     /// <summary>
     /// CvThresholdStep의 파라미터를 편집하는 UserControl.
     /// </summary>
-    public class CvThresholdParamPanel : UserControl, IStepParamPanel
+    public class CvThresholdParamPanel : UserControl, IStepParamPanel, IInputImageSelectable
     {
         private NumericUpDown _nudThreshold;
         private NumericUpDown _nudMaxValue;
         private ComboBox      _cmbType;
+        private ComboBox      _cmbInputImage;
+
+        private readonly List<ImageSourceEntry> _inputImages = new List<ImageSourceEntry>();
 
         private static readonly ThresholdTypes[] Types =
         {
@@ -44,13 +48,29 @@ namespace Vision.UI
             AddLabel("이진화 타입:", LblX, y + 3, LblW);
             _cmbType = new ComboBox { Location = new System.Drawing.Point(CtrlX, y), Size = new System.Drawing.Size(CtrlW, 21), DropDownStyle = ComboBoxStyle.DropDownList };
             _cmbType.Items.AddRange(TypeNames);
-            Controls.Add(_cmbType);
+            Controls.Add(_cmbType); y += RowH;
 
-            Size = new System.Drawing.Size(350, y + 50);
+            AddLabel("입력 이미지:", LblX, y + 3, LblW);
+            _cmbInputImage = new ComboBox { Location = new System.Drawing.Point(CtrlX, y), Size = new System.Drawing.Size(CtrlW + 40, 21), DropDownStyle = ComboBoxStyle.DropDownList };
+            Controls.Add(_cmbInputImage);
+
+            Size = new System.Drawing.Size(370, y + 50);
         }
 
         private void AddLabel(string text, int x, int y, int width)
             => Controls.Add(new Label { Text = text, Location = new System.Drawing.Point(x, y), Size = new System.Drawing.Size(width, 16), AutoSize = false });
+
+        // ── IInputImageSelectable ─────────────────────────────────────────
+
+        public void SetAvailableInputImages(IReadOnlyList<ImageSourceEntry> images)
+        {
+            _inputImages.Clear();
+            _inputImages.AddRange(images);
+            _cmbInputImage.Items.Clear();
+            foreach (var e in _inputImages) _cmbInputImage.Items.Add(e);
+        }
+
+        // ── IStepParamPanel ───────────────────────────────────────────────
 
         public void BindStep(IVisionStep step)
         {
@@ -60,6 +80,13 @@ namespace Vision.UI
             _nudMaxValue.Value  = Clamp((decimal)s.MaxValue,       0, 255);
             int ti = Array.IndexOf(Types, s.Type);
             _cmbType.SelectedIndex = ti >= 0 ? ti : 0;
+
+            _cmbInputImage.SelectedIndex = -1;
+            for (int i = 0; i < _inputImages.Count; i++)
+            {
+                if (_inputImages[i].Key == s.InputImageKey)
+                { _cmbInputImage.SelectedIndex = i; break; }
+            }
         }
 
         public void FlushStep(IVisionStep step)
@@ -70,6 +97,8 @@ namespace Vision.UI
             s.MaxValue       = (double)_nudMaxValue.Value;
             int ti = _cmbType.SelectedIndex;
             if (ti >= 0 && ti < Types.Length) s.Type = Types[ti];
+            int ii = _cmbInputImage.SelectedIndex;
+            s.InputImageKey = (ii >= 0 && ii < _inputImages.Count) ? _inputImages[ii].Key : null;
         }
 
         private static decimal Clamp(decimal v, decimal min, decimal max)

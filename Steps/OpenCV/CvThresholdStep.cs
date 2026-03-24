@@ -58,21 +58,24 @@ namespace Vision.Steps.OpenCV
 
         // ── IStepSerializable ────────────────────────────────────────────
 
-        /// <summary>ThresholdValue, MaxValue, Type을 XML에 저장한다.</summary>
+        /// <summary>ThresholdValue, MaxValue, Type, InputImageKey를 XML에 저장한다.</summary>
         public void SaveParams(XElement el)
         {
             el.Add(
                 Xd("ThresholdValue", ThresholdValue),
                 Xd("MaxValue",       MaxValue),
-                Xi("Type",           (int)Type));
+                Xi("Type",           (int)Type),
+                new XElement("InputImageKey", InputImageKey ?? ""));
         }
 
-        /// <summary>XML 요소에서 ThresholdValue, MaxValue, Type을 복원한다.</summary>
+        /// <summary>XML 요소에서 ThresholdValue, MaxValue, Type, InputImageKey를 복원한다.</summary>
         public void LoadParams(XElement el)
         {
             ThresholdValue = Rd(el, "ThresholdValue", 128.0);
             MaxValue       = Rd(el, "MaxValue",       255.0);
             Type           = (ThresholdTypes)Ri(el, "Type", (int)ThresholdTypes.Binary);
+            var keyEl = el.Element("InputImageKey");
+            InputImageKey  = keyEl != null && !string.IsNullOrEmpty(keyEl.Value) ? keyEl.Value : null;
         }
 
         // ── XML 헬퍼 ─────────────────────────────────────────────────────

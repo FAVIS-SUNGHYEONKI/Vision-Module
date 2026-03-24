@@ -125,7 +125,7 @@
     <Compile Include="PipelineConfig.cs" />
     <Compile Include="PipelineManager.cs" />
     <Compile Include="Converters\ImageConverter.cs" />
-    <Compile Include="Steps\Cognex\CogConvertGray.cs" />
+    <Compile Include="Steps\Cognex\CogConvertGrey.cs" />
     <Compile Include="Steps\Cognex\CogPMAlignStep.cs" />
     <Compile Include="Steps\Cognex\CogWeightedRGBStep.cs" />
     <Compile Include="Steps\OpenCV\CvStepBase.cs" />
@@ -138,6 +138,7 @@
     <Compile Include="Results\VisionResult.cs" />
     <Compile Include="PipelineController.cs" />
     <Compile Include="GUI\IStepParamPanel.cs" />
+    <Compile Include="GUI\ImageSourceEntry.cs" />
     <Compile Include="GUI\StepDescriptor.cs" />
     <Compile Include="GUI\DisplayHelper.cs" />
     <Compile Include="GUI\Pipelines\CogCaliperParamPanel.cs">
@@ -146,7 +147,7 @@
     <Compile Include="GUI\Pipelines\CogBlobParamPanel.cs">
       <SubType>UserControl</SubType>
     </Compile>
-    <Compile Include="GUI\Pipelines\CogConvertGrayParamPanel.cs">
+    <Compile Include="GUI\Pipelines\CogConvertGreyParamPanel.cs">
       <SubType>UserControl</SubType>
     </Compile>
     <Compile Include="GUI\Pipelines\CvThresholdParamPanel.cs">
@@ -172,6 +173,11 @@
     <Content Include="OpenCvSharpExtern.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="GUI\PipelineEditorForm.resx">
+      <DependentUpon>PipelineEditorForm.cs</DependentUpon>
+    </EmbeddedResource>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

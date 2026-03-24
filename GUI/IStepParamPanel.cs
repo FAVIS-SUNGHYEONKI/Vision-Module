@@ -21,4 +21,14 @@ namespace Vision.UI
         /// <summary>UI 컨트롤의 현재 값을 스텝 파라미터에 기록한다.</summary>
         void FlushStep(Vision.IVisionStep step);
     }
+
+    /// <summary>
+    /// 입력 이미지 선택 기능을 지원하는 파라미터 패널이 추가로 구현하는 인터페이스.
+    /// PipelineEditorForm이 스텝 선택 시 호출하여 선택 가능한 이미지 목록을 전달한다.
+    /// </summary>
+    public interface IInputImageSelectable
+    {
+        /// <summary>선택 가능한 입력 이미지 목록을 패널에 전달한다. BindStep 이후 호출된다.</summary>
+        void SetAvailableInputImages(System.Collections.Generic.IReadOnlyList<ImageSourceEntry> images);
+    }
 }

@@ -37,11 +37,11 @@ namespace Vision.Steps.VisionPro
         /// <summary>스텝 고유 이름. VisionContext.Data 키 접두어로 사용된다.</summary>
         public override string Name => "VisionPro.Blob";
 
-        /// <summary>Blob 검출은 그레이스케일 이미지를 입력으로 요구한다.</summary>
+        /// <summary>Grey 이미지 필요. 앞 스텝(ConvertGrey 또는 다른 이미지 처리 스텝)이 Grey를 출력해야 한다.</summary>
         public override ImageType RequiredInputType  => ImageType.Grey;
 
-        /// <summary>Blob 검출 후에도 이미지는 그레이스케일로 유지된다.</summary>
-        public override ImageType ProducedOutputType => ImageType.Grey;
+        /// <summary>Blob 검출은 이미지를 교체하지 않는다.</summary>
+        public override ImageType ProducedOutputType => ImageType.Any;
 
         /// <summary>
         /// Blob 검출 파라미터.
@@ -109,6 +109,7 @@ namespace Vision.Steps.VisionPro
                 Xd("SoftFixedThresholdHigh", seg.SoftFixedThresholdHigh)));
 
             el.Add(new XElement("ConnectivityMinPixels", RunParams.ConnectivityMinPixels));
+            el.Add(new XElement("InputImageKey", InputImageKey ?? ""));
         }
 
         /// <summary>
@@ -145,6 +146,9 @@ namespace Vision.Steps.VisionPro
             var minPxEl = el.Element("ConnectivityMinPixels");
             if (minPxEl != null && int.TryParse(minPxEl.Value, out var minPx))
                 RunParams.ConnectivityMinPixels = minPx;
+            var keyEl = el.Element("InputImageKey");
+            InputImageKey = keyEl != null && !string.IsNullOrEmpty(keyEl.Value) ? keyEl.Value : null;
+
         }
 
         // ── XML 헬퍼 ─────────────────────────────────────────────────────

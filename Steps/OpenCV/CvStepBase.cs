@@ -1,4 +1,5 @@
 using System;
+using Cognex.VisionPro;
 using Vision.Converters;
 
 namespace Vision.Steps.OpenCV
@@ -36,12 +37,28 @@ namespace Vision.Steps.OpenCV
         public virtual ImageType ProducedOutputType => ImageType.Grey;
 
         /// <summary>
-        /// 스텝을 실행한다. CogImage만 있는 경우 OpenCV Mat으로 자동 변환 후
+        /// 입력 이미지 키. VisionContext.Images 에서 해당 키의 이미지를 사용한다.
+        /// null/비어있으면 context.CogImage (이전 스텝 출력)를 그대로 사용한다.
+        /// 예: "image:-1.Green" = 원본 Green 채널,  "image:2" = 3번째 스텝 출력
+        /// </summary>
+        public string InputImageKey { get; set; } = null;
+
+        /// <summary>
+        /// 스텝을 실행한다. InputImageKey가 설정된 경우 해당 이미지로 교체하고,
+        /// CogImage만 있는 경우 OpenCV Mat으로 자동 변환 후
         /// <see cref="ExecuteCore"/>를 호출한다.
         /// </summary>
         /// <param name="context">공유 파이프라인 컨텍스트</param>
         public void Execute(VisionContext context)
         {
+            // InputImageKey가 설정되어 있으면 해당 이미지를 CogImage로 교체
+            if (!string.IsNullOrEmpty(InputImageKey))
+            {
+                context.MatImage?.Dispose();
+                context.MatImage = null;
+                context.CogImage = context.GetInputImage(InputImageKey);
+            }
+
             // VpImage → CvImage 자동 변환 (CvImage가 없을 때만)
             if (context.MatImage == null && context.CogImage != null)
             {
@@ -52,6 +69,16 @@ namespace Vision.Steps.OpenCV
             }
 
             ExecuteCore(context);
+
+            // 출력 이미지를 이름 저장소에 등록 (Mat → CogImage 변환 후)
+            if (context.IsSuccess && context.MatImage != null && !context.MatImage.Empty())
+            {
+                var cogOut = ImageConverter.ToCogImage8Grey(context.MatImage);
+                context.RegisterImage("image:" + context.CurrentStepIndex, cogOut);
+                // context.CogImage도 갱신 (다음 CogStep이 자동 변환 없이 사용 가능)
+                if (context.CogImage == null)
+                    context.CogImage = cogOut;
+            }
         }
 
         /// <summary>

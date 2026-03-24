@@ -74,6 +74,10 @@ namespace Vision.Steps.VisionPro
 
             context.CogImage = result;
             context.MatImage = null;
+
+            // 출력 이미지 등록 — 다운스트림 스텝이 InputImageKey로 조회할 수 있도록
+            if (context.CurrentStepIndex >= 0)
+                context.RegisterImage("image:" + context.CurrentStepIndex, result);
         }
 
         // ── IStepSerializable ────────────────────────────────────────────
@@ -83,7 +87,8 @@ namespace Vision.Steps.VisionPro
             el.Add(
                 new XElement("RedWeight",   RedWeight.ToString("R",   CultureInfo.InvariantCulture)),
                 new XElement("GreenWeight", GreenWeight.ToString("R", CultureInfo.InvariantCulture)),
-                new XElement("BlueWeight",  BlueWeight.ToString("R",  CultureInfo.InvariantCulture)));
+                new XElement("BlueWeight",  BlueWeight.ToString("R",  CultureInfo.InvariantCulture)),
+                new XElement("InputImageKey", InputImageKey ?? ""));
         }
 
         public void LoadParams(XElement el)
@@ -91,6 +96,8 @@ namespace Vision.Steps.VisionPro
             RedWeight   = Rd(el, "RedWeight",   1.0 / 3.0);
             GreenWeight = Rd(el, "GreenWeight", 1.0 / 3.0);
             BlueWeight  = Rd(el, "BlueWeight",  1.0 / 3.0);
+            var keyEl = el.Element("InputImageKey");
+            InputImageKey = keyEl != null && !string.IsNullOrEmpty(keyEl.Value) ? keyEl.Value : null;
         }
 
         private static double Rd(XElement el, string n, double def)

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
 using System.Text;
@@ -9,6 +10,7 @@ using Cognex.VisionPro;
 using Cognex.VisionPro.Caliper;
 using Cognex.VisionPro.Blob;
 using Vision.Steps.VisionPro;
+using Vision.Steps.OpenCV;
 
 namespace Vision.UI
 {
@@ -25,7 +27,6 @@ namespace Vision.UI
         private          int                  _currentPipelineIdx = -1;
 
         private Cognex.VisionPro.Display.CogDisplay cogTestDisplay;
-        private CogRectangleAffine _testRegion;
 
         /// <summary>편집 결과 스텝 목록 (OK 클릭 후 유효).</summary>
         public List<IVisionStep> PipelineSteps { get; private set; }
@@ -35,6 +36,7 @@ namespace Vision.UI
 
         private IStepParamPanel _currentPanel;
         private int             _currentPanelStepIdx = -1;
+        private VisionContext   _lastRunContext;
 
         internal PipelineEditorForm(
             List<StepDescriptor> availableSteps,
@@ -66,9 +68,12 @@ namespace Vision.UI
         private void PipelineEditorForm_Load(object sender, EventArgs e)
         {
             bool hasImage = _inputImage != null;
-            btnRunAll.Enabled        = hasImage && PipelineSteps.Count > 0;
-            btnSetTestRegion.Enabled = hasImage;
-            btnTestRun.Enabled       = hasImage;
+            btnRunAll.Enabled         = hasImage && PipelineSteps.Count > 0;
+            btnShowAllRegions.Enabled = hasImage;
+            btnSingleStepTest.Enabled = false; // 스텝 선택 후 활성화
+
+            cogTestDisplay.VerticalScrollBar   = false;
+            cogTestDisplay.HorizontalScrollBar = false;
 
             if (hasImage)
             {
@@ -82,11 +87,13 @@ namespace Vision.UI
             cogTestDisplay = new Cognex.VisionPro.Display.CogDisplay();
             ((System.ComponentModel.ISupportInitialize)cogTestDisplay).BeginInit();
             cogTestDisplay.Name     = "cogTestDisplay";
-            cogTestDisplay.Location = new Point(12, 534);
+            cogTestDisplay.Location = new Point(12, 550);
             cogTestDisplay.Size     = new Size(800, 340);
             cogTestDisplay.TabIndex = 100;
             ((System.ComponentModel.ISupportInitialize)cogTestDisplay).EndInit();
             Controls.Add(cogTestDisplay);
+
+            
         }
 
         // ── 파이프라인 ComboBox 관리 ─────────────────────────────────────
@@ -289,27 +296,131 @@ namespace Vision.UI
             return prevOutput == nextInput;
         }
 
+        /// <summary>이미지 키("image:-1", "image:-1.Green", "image:2.Red" 등)의 이미지 타입을 반환한다.</summary>
+        private ImageType ResolveImageKeyType(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return ImageType.Any;
+            if (key == "image:-1") return InputImageType;
+            if (key.StartsWith("image:-1.")) return ImageType.Grey; // 채널 추출 → Grey
+            if (key.StartsWith("image:"))
+            {
+                var rest = key.Substring("image:".Length);
+                if (rest.Contains(".")) return ImageType.Grey; // "N.Red/Green/Blue" → Grey
+                if (int.TryParse(rest, out var idx) && idx >= 0 && idx < PipelineSteps.Count)
+                    return GetOutputType(PipelineSteps[idx]);
+            }
+            return ImageType.Any;
+        }
+
+        /// <summary>스텝의 InputImageKey를 반환한다. (CogStepBase / CvStepBase 공용)</summary>
+        private static string GetStepInputImageKey(IVisionStep step)
+        {
+            if (step is Vision.Steps.VisionPro.CogStepBase cog) return cog.InputImageKey;
+            if (step is Vision.Steps.OpenCV.CvStepBase    cv)  return cv.InputImageKey;
+            return null;
+        }
+
+        /// <summary>스텝의 InputImageKey를 설정한다. (CogStepBase / CvStepBase 공용)</summary>
+        private static void SetStepInputImageKey(IVisionStep step, string key)
+        {
+            if (step is Vision.Steps.VisionPro.CogStepBase cog) cog.InputImageKey = key;
+            else if (step is Vision.Steps.OpenCV.CvStepBase cv) cv.InputImageKey  = key;
+        }
+
+        /// <summary>
+        /// stepIdx 직전까지 파이프라인을 흘러온 "실질 이미지 타입"을 계산한다.
+        /// 검사 스텝(ProducedOutputType=Any)은 이미지를 바꾸지 않으므로 흐름 타입 유지.
+        /// </summary>
+        private ImageType GetFlowingType(int stepIdx)
+        {
+            var flowing = InputImageType;
+            for (int i = 0; i < stepIdx && i < PipelineSteps.Count; i++)
+            {
+                var ot = GetOutputType(PipelineSteps[i]);
+                if (ot != ImageType.Any) flowing = ot;
+            }
+            return flowing;
+        }
+
+        /// <summary>입력 이미지의 실제 타입을 반환한다. null이면 Any.</summary>
+        private ImageType InputImageType
+        {
+            get
+            {
+                if (_inputImage == null)                  return ImageType.Any;
+                if (_inputImage is CogImage24PlanarColor) return ImageType.Color;
+                return ImageType.Grey;
+            }
+        }
+
+        /// <summary>
+        /// stepIdx 스텝 기준으로 사용 가능한 입력 이미지 목록을 정적 분석으로 구성한다.
+        /// 원본 이미지 + 이전 스텝 중 이미지를 생산하는 스텝의 출력이 포함된다.
+        /// Color 이미지는 .Red/.Green/.Blue 채널 항목도 추가된다.
+        /// </summary>
+        private List<ImageSourceEntry> GetAvailableInputImages(int stepIdx, ImageType requiredType)
+        {
+            var result = new List<ImageSourceEntry>();
+
+            void AddEntry(string key, ImageType type, string label)
+            {
+                if (requiredType != ImageType.Any && type != ImageType.Any && type != requiredType) return;
+                result.Add(new ImageSourceEntry { Key = key, Type = type, Label = label });
+            }
+
+            void AddWithChannels(string key, ImageType type, string label)
+            {
+                AddEntry(key, type, label);
+                if (type == ImageType.Color)
+                {
+                    AddEntry(key + ".Red",   ImageType.Grey, label + " — Red");
+                    AddEntry(key + ".Green", ImageType.Grey, label + " — Green");
+                    AddEntry(key + ".Blue",  ImageType.Grey, label + " — Blue");
+                }
+            }
+
+            // 원본 이미지
+            AddWithChannels("image:-1", InputImageType, "원본 이미지");
+
+            // 이전 스텝 출력
+            for (int i = 0; i < stepIdx; i++)
+            {
+                var step    = PipelineSteps[i];
+                var outType = GetOutputType(step);
+                if (outType == ImageType.Any) continue; // pass-through, 이미지 생산 안 함
+
+                string label = "[Step " + (i + 1) + "] " + step.DisplayName;
+                string key   = "image:" + i;
+
+                if (step is IMultiChannelStep)
+                {
+                    // R/G/B 3채널을 개별 항목으로 표시 (기본 단일 항목 없음)
+                    AddEntry(key + ".Red",   ImageType.Grey, label + " — Red");
+                    AddEntry(key + ".Green", ImageType.Grey, label + " — Green");
+                    AddEntry(key + ".Blue",  ImageType.Grey, label + " — Blue");
+                }
+                else
+                {
+                    AddWithChannels(key, outType, label);
+                }
+            }
+
+            return result;
+        }
+
         // ── 소스 ListBox 선택 관리 ───────────────────────────────────────
 
-        private void lstCognex_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            if (lstCognex.SelectedIndex >= 0) lstOpenCV.SelectedIndex = -1;
-            btnAdd.Enabled = lstCognex.SelectedIndex >= 0 || lstOpenCV.SelectedIndex >= 0;
-        }
 
-        private void lstOpenCV_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            if (lstOpenCV.SelectedIndex >= 0) lstCognex.SelectedIndex = -1;
-            btnAdd.Enabled = lstCognex.SelectedIndex >= 0 || lstOpenCV.SelectedIndex >= 0;
-        }
-
-        private void lstCognex_DoubleClick(object sender, EventArgs e) => btnAdd_Click(sender, e);
-        private void lstOpenCV_DoubleClick(object sender, EventArgs e) => btnAdd_Click(sender, e);
+        private void lstCognex_DoubleClick(object sender, EventArgs e) => AddSelectedStep(sender, e);
+        private void lstOpenCV_DoubleClick(object sender, EventArgs e) => AddSelectedStep(sender, e);
 
         // ── 스텝 순서 목록 갱신 ─────────────────────────────────────────
 
         private void RefreshPipelineList(int selectIdx = -1)
         {
+            // 스텝 Name별 누적 카운터 (Caliper.0, Caliper.1 ... 인덱스 계산용)
+            var nameCounter = new Dictionary<string, int>();
+
             lstPipeline.BeginUpdate();
             lstPipeline.Items.Clear();
             for (int i = 0; i < PipelineSteps.Count; i++)
@@ -317,18 +428,25 @@ namespace Vision.UI
                 var step    = PipelineSteps[i];
                 var inType  = GetInputType(step);
                 var outType = GetOutputType(step);
-                string typeTag = "[" + StepDescriptor.TypeLabel(inType) + "->" + StepDescriptor.TypeLabel(outType) + "]";
-                string compat  = "";
-                if (i > 0)
-                {
-                    var prevOut = GetOutputType(PipelineSteps[i - 1]);
-                    bool ok     = IsCompatible(prevOut, inType);
-                    compat = ok ? "  OK"
-                        : "  !! " + StepDescriptor.TypeLabel(prevOut) + "->" + StepDescriptor.TypeLabel(inType) + " 불일치";
-                }
+                string typeTag = outType == ImageType.Any
+                    ? "[" + StepDescriptor.TypeLabel(inType) + "]"
+                    : "[" + StepDescriptor.TypeLabel(inType) + "->" + StepDescriptor.TypeLabel(outType) + "]";
+                // InputImageKey가 있으면 해당 이미지 타입, 없으면 파이프라인 흐름 타입으로 호환성 검사
+                var inputKey = GetStepInputImageKey(step);
+                bool hasKey  = !string.IsNullOrEmpty(inputKey);
+                var effectiveInputType = hasKey ? ResolveImageKeyType(inputKey) : GetFlowingType(i);
+                bool compat_ok = IsCompatible(effectiveInputType, inType);
+                string compat  = compat_ok ? (i > 0 || hasKey ? "  OK" : "")
+                    : "  !! " + StepDescriptor.TypeLabel(effectiveInputType) + "->" + StepDescriptor.TypeLabel(inType) + " 불일치";
+
+                // Name별 순번 계산
+                if (!nameCounter.ContainsKey(step.Name)) nameCounter[step.Name] = 0;
+                int toolIdx = nameCounter[step.Name]++;
+                string nameWithIdx = "[" + step.Name + "." + toolIdx + "]";
+
                 string label = step.DisplayName != step.Name
-                    ? step.DisplayName + "  [" + step.Name + "]"
-                    : step.Name;
+                    ? step.DisplayName + "  " + nameWithIdx
+                    : nameWithIdx;
                 lstPipeline.Items.Add((i + 1) + ". " + typeTag.PadRight(16) + label + compat);
             }
             lstPipeline.EndUpdate();
@@ -340,36 +458,63 @@ namespace Vision.UI
         private void UpdatePipelineButtonStates()
         {
             int idx = lstPipeline.SelectedIndex;
-            btnRemove.Enabled   = idx >= 0;
-            btnMoveUp.Enabled   = idx > 0;
-            btnMoveDown.Enabled = idx >= 0 && idx < PipelineSteps.Count - 1;
             btnRunAll.Enabled   = _inputImage != null && PipelineSteps.Count > 0;
         }
 
         // ── 스텝 추가 / 제거 / 순서 변경 ────────────────────────────────
 
-        private void btnAdd_Click(object sender, EventArgs e)
+        private void AddSelectedStep(object sender, EventArgs e)
         {
             var desc = (lstCognex.SelectedItem as StepDescriptor)
                     ?? (lstOpenCV.SelectedItem as StepDescriptor);
             if (desc == null) return;
 
-            if (PipelineSteps.Count > 0)
+            FlushCurrentPanel();
+            var newStep = desc.CreateStep();
+
+            // 원본이미지가 Color이고 스텝이 Grey를 요구하면 기본 InputImageKey를 Green 채널로 설정
+            if (desc.RequiredInputType == ImageType.Grey && InputImageType == ImageType.Color)
+                SetStepInputImageKey(newStep, "image:-1.Green");
+
+            // Color를 요구하는 스텝은 context.CogImage 오염을 방지하기 위해 InputImageKey 자동 설정
+            // (이전 검사 스텝이 context.CogImage를 Grey로 바꿔도 명시적 키로 Color를 조회)
+            if (desc.RequiredInputType == ImageType.Color)
             {
-                var prevOut = GetOutputType(PipelineSteps[PipelineSteps.Count - 1]);
-                if (!IsCompatible(prevOut, desc.RequiredInputType))
+                var available = GetAvailableInputImages(PipelineSteps.Count, ImageType.Color);
+                if (available.Count > 0)
+                    SetStepInputImageKey(newStep, available[0].Key);
+            }
+
+            // 호환성 검사: 불일치 시 사용 가능한 이미지가 있으면 자동 선택, 없으면 경고
+            {
+                var inputKey      = GetStepInputImageKey(newStep);
+                var effectiveType = !string.IsNullOrEmpty(inputKey)
+                    ? ResolveImageKeyType(inputKey)
+                    : GetFlowingType(PipelineSteps.Count);
+                if (!IsCompatible(effectiveType, desc.RequiredInputType))
                 {
-                    string msg = "[이미지 타입 불일치]\n\n"
-                        + "이전 스텝 출력 : " + StepDescriptor.TypeLabel(prevOut) + "\n"
-                        + "추가할 스텝 입력: " + StepDescriptor.TypeLabel(desc.RequiredInputType) + "\n\n"
-                        + "그래도 추가하시겠습니까?";
-                    if (MessageBox.Show(msg, "타입 불일치 경고",
-                            MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.No)
-                        return;
+                    // 선택 가능한 호환 이미지가 있으면 첫 번째를 기본 InputImageKey로 자동 설정
+                    var available = GetAvailableInputImages(PipelineSteps.Count, desc.RequiredInputType);
+                    if (available.Count > 0)
+                    {
+                        SetStepInputImageKey(newStep, available[0].Key);
+                        effectiveType = ResolveImageKeyType(available[0].Key);
+                    }
+                    // 여전히 불일치하면 경고 다이얼로그
+                    if (!IsCompatible(effectiveType, desc.RequiredInputType))
+                    {
+                        string msg = "[이미지 타입 불일치]\n\n"
+                            + "현재 이미지: " + StepDescriptor.TypeLabel(effectiveType) + "\n"
+                            + "추가할 스텝 입력: " + StepDescriptor.TypeLabel(desc.RequiredInputType) + "\n\n"
+                            + "그래도 추가하시겠습니까?";
+                        if (MessageBox.Show(msg, "타입 불일치 경고",
+                                MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.No)
+                            return;
+                    }
                 }
             }
-            FlushCurrentPanel();
-            PipelineSteps.Add(desc.CreateStep());
+
+            PipelineSteps.Add(newStep);
             RefreshPipelineList(PipelineSteps.Count - 1);
         }
 
@@ -505,9 +650,9 @@ namespace Vision.UI
             UpdatePipelineButtonStates();
             int idx = lstPipeline.SelectedIndex;
             ShowParamPanel(idx);
-            bool isRegionStep = idx >= 0 && idx < PipelineSteps.Count && PipelineSteps[idx] is IRegionStep;
-            btnSetTestRegion.Enabled  = _inputImage != null && isRegionStep;
-            btnSaveStepParams.Enabled = idx >= 0;
+            btnShowAllRegions.Enabled  = _inputImage != null;
+            btnSingleStepTest.Enabled  = _inputImage != null && idx >= 0;
+            btnSaveStepParams.Enabled  = idx >= 0;
         }
 
         private void ShowParamPanel(int stepIdx)
@@ -517,6 +662,7 @@ namespace Vision.UI
             if (stepIdx < 0 || stepIdx >= PipelineSteps.Count) return;
 
             var step = PipelineSteps[stepIdx];
+            UpdateDisplayForStep(step);
             var ctrl = StepParamPanelFactory.Create(step);
 
             if (ctrl == null)
@@ -535,6 +681,16 @@ namespace Vision.UI
             }
 
             var panel = ctrl as IStepParamPanel;
+
+            // 입력 이미지 선택 기능을 지원하는 패널이면 목록 먼저 전달 후 Bind
+            var imageSelectable = ctrl as IInputImageSelectable;
+            if (imageSelectable != null)
+            {
+                var inputType = GetInputType(step);
+                var available = GetAvailableInputImages(stepIdx, inputType);
+                imageSelectable.SetAvailableInputImages(available);
+            }
+
             panel?.BindStep(step);
 
             var blobPanel = ctrl as CogBlobParamPanel;
@@ -557,6 +713,10 @@ namespace Vision.UI
             // 표시 이름 TextBox 활성화
             txtStepDisplayName.Text    = step.DisplayName;
             txtStepDisplayName.Enabled = true;
+
+            // Image Processing Tool: 초기 선택 시 자동 미리보기 실행 → 변환 결과를 display에 표시
+            if (_inputImage != null && GetOutputType(step) != ImageType.Any)
+                _ = RunStepTestAsync(stepIdx);
         }
 
         private void FlushCurrentPanel()
@@ -580,82 +740,130 @@ namespace Vision.UI
             txtStepDisplayName.Enabled  = false;
         }
 
-        // ── Region 설정 ──────────────────────────────────────────────────
-
-        private async void btnSetTestRegion_Click(object sender, EventArgs e)
+        /// <summary>
+        /// 이미지 키("image:-1", "image:-1.Green", "image:N" 등)를 _inputImage 또는
+        /// _lastRunContext에서 정적으로 해석하여 반환한다. 해석 불가 시 null.
+        /// </summary>
+        private ICogImage ResolveStaticImage(string key)
         {
-            int idx = lstPipeline.SelectedIndex;
-            if (idx < 0 || _inputImage == null) return;
-
-            var step = PipelineSteps[idx] as IRegionStep;
-            if (step == null)
+            if (string.IsNullOrEmpty(key) || _inputImage == null) return null;
+            if (key == "image:-1") return _inputImage;
+            var colorImg = _inputImage as CogImage24PlanarColor;
+            if (colorImg != null)
             {
-                txtTestResult.Text = PipelineSteps[idx].Name + " 스텝은 Region을 지원하지 않습니다.";
-                return;
+                if (key == "image:-1.Red")   return colorImg.GetPlane(CogImagePlaneConstants.Red);
+                if (key == "image:-1.Green") return colorImg.GetPlane(CogImagePlaneConstants.Green);
+                if (key == "image:-1.Blue")  return colorImg.GetPlane(CogImagePlaneConstants.Blue);
             }
-
-            FlushCurrentPanel();
-            btnSetTestRegion.Enabled = false;
-            btnTestRun.Enabled       = false;
-            txtTestResult.Text       = "입력 이미지 준비 중...";
-
-            ICogImage stepInput = _inputImage;
-            if (idx > 0)
+            if (_lastRunContext != null)
             {
-                var ctx = new VisionContext { CogImage = _inputImage };
-                try
-                {
-                    await Task.Run(() =>
-                    {
-                        for (int i = 0; i < idx; i++)
-                        {
-                            PipelineSteps[i].Execute(ctx);
-                            if (!ctx.IsSuccess && !PipelineSteps[i].ContinueOnFailure) break;
-                        }
-                    });
-                    stepInput = ctx.CogImage ?? _inputImage;
-                }
-                catch (Exception ex)
-                {
-                    txtTestResult.Text = "[오류] 이전 스텝 실행 실패:\r\n" + ex.Message;
-                    btnSetTestRegion.Enabled = true;
-                    btnTestRun.Enabled       = true;
-                    return;
-                }
+                ICogImage img;
+                if (_lastRunContext.Images.TryGetValue(key, out img) && img != null) return img;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 선택된 스텝의 종류에 따라 cogTestDisplay 이미지를 변경하고,
+        /// 그래픽을 초기화한 뒤 스텝에 Region이 설정되어 있으면 표시한다.
+        /// - Image Processing Tool: 마지막 실행 결과의 출력 이미지
+        /// - 검사 Tool: InputImageKey로 해석한 입력 이미지
+        /// </summary>
+        private void UpdateDisplayForStep(IVisionStep step)
+        {
+            if (_inputImage == null) return;
+
+            int  stepIdx      = PipelineSteps.IndexOf(step);
+            bool isProcessing = GetOutputType(step) != ImageType.Any;
+
+            ICogImage displayImage;
+            if (isProcessing)
+            {
+                // Image Processing Tool → 출력 이미지 (마지막 실행 컨텍스트에서 조회)
+                displayImage = null;
+                if (stepIdx >= 0 && _lastRunContext != null)
+                    _lastRunContext.Images.TryGetValue("image:" + stepIdx, out displayImage);
+                if (displayImage == null) displayImage = _inputImage;
+            }
+            else
+            {
+                // 검사 Tool → InputImageKey로 해석한 입력 이미지
+                var inputKey = GetStepInputImageKey(step);
+                displayImage = ResolveStaticImage(inputKey) ?? _inputImage;
             }
 
             cogTestDisplay.StaticGraphics.Clear();
             cogTestDisplay.InteractiveGraphics.Clear();
-            cogTestDisplay.Image = stepInput;
+            cogTestDisplay.Image = displayImage;
+            cogTestDisplay.Fit(false);
 
-            var saved = step.Region;
-            double cx  = saved != null ? saved.CenterX     : stepInput.Width  / 2.0;
-            double cy  = saved != null ? saved.CenterY     : stepInput.Height / 2.0;
-            double w   = saved != null ? saved.SideXLength : stepInput.Width  / 3.0;
-            double h   = saved != null ? saved.SideYLength : stepInput.Height / 6.0;
-            double rot = saved != null ? saved.Rotation    : 0.0;
-            double skw = saved != null ? saved.Skew        : 0.0;
+            // ── Region이 있으면 InteractiveGraphics에 표시 (드래그 가능) ──
+            var regionStep = step as IRegionStep;
+            if (regionStep?.Region == null) return;
 
-            _testRegion = new CogRectangleAffine();
-            _testRegion.SetCenterLengthsRotationSkew(cx, cy, w, h, rot, skw);
-            _testRegion.GraphicDOFEnable = CogRectangleAffineDOFConstants.All;
-            _testRegion.Interactive      = true;
-            _testRegion.Color            = CogColorConstants.Cyan;
-            _testRegion.TipText          = ((IVisionStep)step).Name + " 검사 영역 (드래그로 조정)";
-            cogTestDisplay.InteractiveGraphics.Add(_testRegion, "test_region", false);
-            step.Region = _testRegion;
+            var region = regionStep.Region;
+            var graphic = new CogRectangleAffine();
+            graphic.SetCenterLengthsRotationSkew(
+                region.CenterX, region.CenterY,
+                region.SideXLength, region.SideYLength,
+                region.Rotation, region.Skew);
+            graphic.Color            = CogColorConstants.Cyan;
+            graphic.GraphicDOFEnable = CogRectangleAffineDOFConstants.All;
+            graphic.Interactive      = true;
+            graphic.TipText          = ((IVisionStep)regionStep).Name + " 검사 영역 (드래그로 조정)";
+            cogTestDisplay.InteractiveGraphics.Add(graphic, "step_region", false);
+            regionStep.Region = graphic;
+        }
 
-            txtTestResult.Text = "Region을 드래그하여 조정한 뒤 [스텝 테스트]를 클릭하세요.";
-            btnSetTestRegion.Enabled = true;
-            btnTestRun.Enabled       = true;
+        // ── Region 설정 ──────────────────────────────────────────────────
+
+        private void btnShowAllRegions_Click(object sender, EventArgs e)
+        {
+            if (_inputImage == null) return;
+
+            FlushCurrentPanel();
+            cogTestDisplay.StaticGraphics.Clear();
+            cogTestDisplay.InteractiveGraphics.Clear();
+            cogTestDisplay.Image = _inputImage;
+
+            int regionCount = 0;
+            for (int i = 0; i < PipelineSteps.Count; i++)
+            {
+                var regionStep = PipelineSteps[i] as IRegionStep;
+                if (regionStep == null) continue;
+
+                var saved = regionStep.Region;
+                double cx  = saved != null ? saved.CenterX     : _inputImage.Width  / 2.0;
+                double cy  = saved != null ? saved.CenterY     : _inputImage.Height / 2.0;
+                double w   = saved != null ? saved.SideXLength : _inputImage.Width  / 3.0;
+                double h   = saved != null ? saved.SideYLength : _inputImage.Height / 6.0;
+                double rot = saved != null ? saved.Rotation    : 0.0;
+                double skw = saved != null ? saved.Skew        : 0.0;
+
+                var graphic = new CogRectangleAffine();
+                graphic.SetCenterLengthsRotationSkew(cx, cy, w, h, rot, skw);
+                graphic.GraphicDOFEnable = CogRectangleAffineDOFConstants.All;
+                graphic.Interactive      = true;
+                graphic.Color            = CogColorConstants.Cyan;
+                graphic.TipText          = "[" + (i + 1) + "] " + PipelineSteps[i].Name + " 영역 (드래그로 조정)";
+                cogTestDisplay.InteractiveGraphics.Add(graphic, "region_" + i, false);
+                regionStep.Region = graphic;
+
+                regionCount++;
+            }
+
+            txtTestResult.Text = regionCount > 0
+                ? "전체 " + regionCount + "개 Region 표시 중. 드래그하여 조정한 뒤 저장하세요."
+                : "Region을 지원하는 스텝이 없습니다.";
         }
 
         // ── 스텝 테스트 ──────────────────────────────────────────────────
 
-        private async void btnTestRun_Click(object sender, EventArgs e)
+        private async void btnSingleStepTest_Click(object sender, EventArgs e)
         {
             int idx = lstPipeline.SelectedIndex;
             if (idx < 0 || _inputImage == null) return;
+            FlushCurrentPanel();
             await RunStepTestAsync(idx);
         }
 
@@ -666,12 +874,16 @@ namespace Vision.UI
             if (idx < 0 || idx >= PipelineSteps.Count || _inputImage == null) return;
             if (_previewRunning) return;
             _previewRunning = true;
-            btnSetTestRegion.Enabled = false;
-            btnTestRun.Enabled       = false;
+            btnShowAllRegions.Enabled = false;
+            btnSingleStepTest.Enabled       = false;
             txtTestResult.Text       = "테스트 실행 중...";
 
             bool selectedIsInspection = PipelineSteps[idx] is IInspectionStep;
             var context = new VisionContext { CogImage = _inputImage };
+            // 원본 이미지 등록 (R/G/B 채널 포함) — InputImageKey로 채널 조회 가능하도록
+            context.RegisterImage("image:-1", _inputImage);
+            if (_inputImage is CogImage24PlanarColor colorImg0)
+                context.OriginalColorImage = colorImg0;
             try
             {
                 await Task.Run(() =>
@@ -679,24 +891,30 @@ namespace Vision.UI
                     for (int i = 0; i < idx; i++)
                     {
                         if (!selectedIsInspection && PipelineSteps[i] is IInspectionStep) continue;
+                        context.CurrentStepIndex = i;
                         PipelineSteps[i].Execute(context);
                         if (!context.IsSuccess && !PipelineSteps[i].ContinueOnFailure) break;
                     }
+                    context.CurrentStepIndex = idx;
                     PipelineSteps[idx].Execute(context);
                 });
             }
             catch (Exception ex)
             {
                 txtTestResult.Text = "[예외] " + ex.Message;
-                btnSetTestRegion.Enabled = _inputImage != null && PipelineSteps[idx] is IRegionStep;
-                btnTestRun.Enabled = true;
+                btnShowAllRegions.Enabled = _inputImage != null;
+                btnSingleStepTest.Enabled = true;
                 _previewRunning    = false;
                 return;
             }
 
+            _lastRunContext = context;
             ShowTestResult(context, PipelineSteps[idx]);
-            btnSetTestRegion.Enabled = _inputImage != null && PipelineSteps[idx] is IRegionStep;
-            btnTestRun.Enabled       = true;
+            // Image Processing Tool이면 출력 이미지를 display에 반영
+            if (GetOutputType(PipelineSteps[idx]) != ImageType.Any)
+                UpdateDisplayForStep(PipelineSteps[idx]);
+            btnShowAllRegions.Enabled = _inputImage != null;
+            btnSingleStepTest.Enabled       = true;
             _previewRunning          = false;
         }
 
@@ -707,14 +925,19 @@ namespace Vision.UI
             if (_inputImage == null || PipelineSteps.Count == 0) return;
             FlushCurrentPanel();
             btnRunAll.Enabled        = false;
-            btnSetTestRegion.Enabled = false;
-            btnTestRun.Enabled       = false;
+            btnShowAllRegions.Enabled = false;
+            btnSingleStepTest.Enabled       = false;
             txtTestResult.Text       = "전체 실행 중...";
             cogTestDisplay.InteractiveGraphics.Clear();
             cogTestDisplay.StaticGraphics.Clear();
 
             var context     = new VisionContext { CogImage = _inputImage };
-            var stepResults = new List<Tuple<IVisionStep, bool, List<string>, string>>();
+            // 원본 이미지 등록 (R/G/B 채널 포함) — InputImageKey로 채널 조회 가능하도록
+            context.RegisterImage("image:-1", _inputImage);
+            if (_inputImage is CogImage24PlanarColor colorImg1)
+                context.OriginalColorImage = colorImg1;
+            var stepResults = new List<Tuple<IVisionStep, bool, List<string>, string, long>>();
+            var totalSw = Stopwatch.StartNew();
 
             try
             {
@@ -723,9 +946,12 @@ namespace Vision.UI
                     for (int i = 0; i < PipelineSteps.Count; i++)
                     {
                         var step       = PipelineSteps[i];
+                        context.CurrentStepIndex = i;
                         var keysBefore = new System.Collections.Generic.HashSet<string>(context.Data.Keys);
                         int errsBefore = context.Errors.Count;
+                        var stepSw     = Stopwatch.StartNew();
                         step.Execute(context);
+                        stepSw.Stop();
                         var newKeys = new List<string>();
                         foreach (var k in context.Data.Keys)
                             if (!keysBefore.Contains(k)) newKeys.Add(k);
@@ -734,7 +960,7 @@ namespace Vision.UI
                             : context.Errors.Count > 0
                                 ? context.Errors[context.Errors.Count - 1]
                                 : "(알 수 없는 오류)";
-                        stepResults.Add(Tuple.Create(step, stepOk, newKeys, errMsg));
+                        stepResults.Add(Tuple.Create(step, stepOk, newKeys, errMsg, stepSw.ElapsedMilliseconds));
                         if (!context.IsSuccess && !step.ContinueOnFailure) break;
                     }
                 });
@@ -743,26 +969,38 @@ namespace Vision.UI
             {
                 txtTestResult.Text = "[예외] " + ex.Message;
                 btnRunAll.Enabled  = _inputImage != null && PipelineSteps.Count > 0;
-                btnTestRun.Enabled = true;
+                btnSingleStepTest.Enabled = true;
                 return;
             }
 
+            totalSw.Stop();
+            _lastRunContext = context;
             cogTestDisplay.StaticGraphics.Clear();
             if (context.CogImage != null) cogTestDisplay.Image = context.CogImage;
 
+            double totalMs = totalSw.Elapsed.TotalMilliseconds;
+            string totalTimeStr = totalMs >= 1000
+                ? totalMs.ToString("F1") + " ms (" + (totalMs / 1000.0).ToString("F2") + " s)"
+                : totalMs.ToString("F1") + " ms";
+
             var sb = new StringBuilder();
             sb.AppendLine("=== 전체 파이프라인 실행 결과 ===");
-            sb.AppendLine("스텝 수: " + PipelineSteps.Count + " / 실행: " + stepResults.Count);
+            sb.AppendLine("Tact Time : " + totalTimeStr);
+            sb.AppendLine("스텝 수   : " + PipelineSteps.Count + " / 실행: " + stepResults.Count);
             sb.AppendLine(new string('=', 35));
 
             for (int i = 0; i < stepResults.Count; i++)
             {
-                var t    = stepResults[i];
-                var step = t.Item1; bool ok = t.Item2;
-                var keys = t.Item3; var err = t.Item4;
+                var t      = stepResults[i];
+                var step   = t.Item1; bool ok = t.Item2;
+                var keys   = t.Item3; var err = t.Item4;
+                long stepMs = t.Item5;
+                string stepTimeStr = stepMs >= 1000
+                    ? stepMs.ToString("F0") + " ms (" + (stepMs / 1000.0).ToString("F2") + " s)"
+                    : stepMs + " ms";
 
                 sb.AppendLine();
-                sb.AppendLine("[Step " + (i + 1) + "] " + step.Name + (ok ? " ✓" : " ✗"));
+                sb.AppendLine("[Step " + (i + 1) + "] " + step.Name + (ok ? " ✓" : " ✗") + "  (" + stepTimeStr + ")");
                 if (!ok && err != null) sb.AppendLine("  오류: " + err);
 
                 foreach (var key in keys)
@@ -835,8 +1073,8 @@ namespace Vision.UI
 
             txtTestResult.Text = sb.ToString();
             int lastIdx = lstPipeline.SelectedIndex;
-            btnSetTestRegion.Enabled = _inputImage != null && lastIdx >= 0 && PipelineSteps[lastIdx] is IRegionStep;
-            btnTestRun.Enabled = lastIdx >= 0;
+            btnShowAllRegions.Enabled = _inputImage != null;
+            btnSingleStepTest.Enabled = lastIdx >= 0;
             btnRunAll.Enabled  = true;
         }
 
@@ -940,6 +1178,19 @@ namespace Vision.UI
                 CommitAndSave();
                 RefreshPipelineList(idx);
                 txtTestResult.Text = "[저장 완료] " + PipelineSteps[idx].DisplayName + "\r\n"
+                    + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "\r\n" + _pipelineManager.FilePath;
+            }
+            catch (Exception ex) { txtTestResult.Text = "[저장 실패] " + ex.Message; }
+        }
+
+        private void btnSaveAllStepParams_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                CommitAndSave();
+                int idx = lstPipeline.SelectedIndex;
+                RefreshPipelineList(idx);
+                txtTestResult.Text = "[전체 저장 완료] " + PipelineSteps.Count + "개 스텝\r\n"
                     + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "\r\n" + _pipelineManager.FilePath;
             }
             catch (Exception ex) { txtTestResult.Text = "[저장 실패] " + ex.Message; }

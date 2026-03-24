@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Cognex.VisionPro;
 
 
 namespace Vision
@@ -53,6 +54,13 @@ namespace Vision
             VisionContext context,
             CancellationToken cancellationToken = default)
         {
+            // 컬러 이미지로 시작하는 경우 원본을 보존 (채널별 Grey 캐시 소스)
+            if (context.OriginalColorImage == null && context.CogImage is CogImage24PlanarColor colorImg)
+                context.OriginalColorImage = colorImg;
+
+            // 원본 이미지를 이름 저장소에 등록 (Color이면 R/G/B 채널도 자동 등록)
+            context.RegisterImage("image:-1", context.CogImage);
+
             try
             {
                 for (int i = 0; i < _steps.Count; i++)
@@ -61,6 +69,7 @@ namespace Vision
                     cancellationToken.ThrowIfCancellationRequested();
 
                     var step = _steps[i];
+                    context.CurrentStepIndex = i;
 
                     try
                     {

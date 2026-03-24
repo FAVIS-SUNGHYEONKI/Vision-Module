@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
 using Vision.Steps.VisionPro;
@@ -9,7 +10,7 @@ namespace Vision.UI
     /// CogWeightedRGBStep의 R/G/B 가중치 파라미터 패널.
     /// 프리셋 콤보박스와 개별 TrackBar/NumericUpDown으로 가중치를 조절한다.
     /// </summary>
-    public class CogWeightedRGBParamPanel : UserControl, IStepParamPanel
+    public class CogWeightedRGBParamPanel : UserControl, IStepParamPanel, IInputImageSelectable
     {
         /// <summary>가중치/프리셋 변경 시 발생 — PipelineEditorForm이 구독하여 실시간 미리보기를 실행합니다.</summary>
         public event EventHandler PreviewRequested;
@@ -18,8 +19,11 @@ namespace Vision.UI
         private NumericUpDown   _nudRed;
         private NumericUpDown   _nudGreen;
         private NumericUpDown   _nudBlue;
+        private ComboBox        _cmbInputImage;
         private bool            _syncing;
         private IVisionStep     _boundStep;
+
+        private readonly List<ImageSourceEntry> _inputImages = new List<ImageSourceEntry>();
 
         private static readonly (string Label, double R, double G, double B)[] Presets =
         {
@@ -49,9 +53,14 @@ namespace Vision.UI
             Controls.Add(_cmbPreset);
 
             y += 32;
-            _nudRed   = AddWeightRow("Red",   x0, y,       lw, nw);  y += 28;
-            _nudGreen = AddWeightRow("Green", x0, y,       lw, nw);  y += 28;
-            _nudBlue  = AddWeightRow("Blue",  x0, y,       lw, nw);  y += 12;
+            _nudRed   = AddWeightRow("Red",   x0, y, lw, nw);  y += 28;
+            _nudGreen = AddWeightRow("Green", x0, y, lw, nw);  y += 28;
+            _nudBlue  = AddWeightRow("Blue",  x0, y, lw, nw);  y += 28;
+
+            Controls.Add(new Label { Text = "입력 이미지:", Location = new Point(x0, y + 3), Size = new Size(80, 16) });
+            _cmbInputImage = new ComboBox { Location = new Point(x0 + 84, y), Size = new Size(230, 21), DropDownStyle = ComboBoxStyle.DropDownList };
+            Controls.Add(_cmbInputImage);
+            y += 32;
 
             Size = new Size(340, y);
         }
@@ -75,6 +84,7 @@ namespace Vision.UI
 
         private void OnPresetChanged(object sender, EventArgs e)
         {
+            if (_syncing) return;
             int idx = _cmbPreset.SelectedIndex;
             if (idx < 0 || idx >= Presets.Length) return;
             var p = Presets[idx];
@@ -115,6 +125,18 @@ namespace Vision.UI
 
         private static bool Approx(double a, double b) => Math.Abs(a - b) < 0.0005;
 
+        // ── IInputImageSelectable ─────────────────────────────────────────
+
+        public void SetAvailableInputImages(IReadOnlyList<ImageSourceEntry> images)
+        {
+            _inputImages.Clear();
+            _inputImages.AddRange(images);
+            _cmbInputImage.Items.Clear();
+            foreach (var e in _inputImages) _cmbInputImage.Items.Add(e);
+        }
+
+        // ── IStepParamPanel ───────────────────────────────────────────────
+
         public void BindStep(IVisionStep step)
         {
             var s = step as CogWeightedRGBStep;
@@ -134,6 +156,13 @@ namespace Vision.UI
                 p.R >= 0 && Approx(p.R, r) && Approx(p.G, g) && Approx(p.B, b));
             _cmbPreset.SelectedIndex = match >= 0 ? match : Presets.Length - 1;
             _syncing = false;
+
+            _cmbInputImage.SelectedIndex = -1;
+            for (int i = 0; i < _inputImages.Count; i++)
+            {
+                if (_inputImages[i].Key == s.InputImageKey)
+                { _cmbInputImage.SelectedIndex = i; break; }
+            }
         }
 
         public void FlushStep(IVisionStep step)
@@ -143,6 +172,8 @@ namespace Vision.UI
             s.RedWeight   = (double)_nudRed.Value;
             s.GreenWeight = (double)_nudGreen.Value;
             s.BlueWeight  = (double)_nudBlue.Value;
+            int ii = _cmbInputImage.SelectedIndex;
+            s.InputImageKey = (ii >= 0 && ii < _inputImages.Count) ? _inputImages[ii].Key : null;
         }
     }
 }

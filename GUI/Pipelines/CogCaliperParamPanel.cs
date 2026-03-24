@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
 using Vision.Steps.VisionPro;
@@ -10,7 +11,7 @@ namespace Vision.UI
     /// CogCaliperStep의 파라미터를 편집하는 UserControl.
     /// PipelineEditorForm 또는 외부 폼에 직접 임베드할 수 있습니다.
     /// </summary>
-    public class CogCaliperParamPanel : UserControl, IStepParamPanel
+    public class CogCaliperParamPanel : UserControl, IStepParamPanel, IInputImageSelectable
     {
         private NumericUpDown _nudContrast;
         private ComboBox      _cmbEdgeMode;
@@ -18,6 +19,9 @@ namespace Vision.UI
         private NumericUpDown _nudFilterSize;
         private NumericUpDown _nudMaxResults;
         private ComboBox      _cmbSelectionMode;
+        private ComboBox      _cmbInputImage;
+
+        private readonly List<ImageSourceEntry> _inputImages = new List<ImageSourceEntry>();
 
         private bool _syncing;
 
@@ -130,6 +134,16 @@ namespace Vision.UI
             };
             _cmbSelectionMode.Items.AddRange(SelectionModeNames);
             Controls.Add(_cmbSelectionMode);
+            y += RowH;
+
+            AddLabel("입력 이미지:", LblX, y + 3, LblW);
+            _cmbInputImage = new ComboBox
+            {
+                Location      = new Point(CtrlX, y),
+                Size          = new Size(CtrlW + 50, 21),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+            };
+            Controls.Add(_cmbInputImage);
 
             Size = new Size(350, y + 40);
         }
@@ -142,6 +156,16 @@ namespace Vision.UI
                 Size     = new Size(width, 16),
                 AutoSize = false,
             });
+
+        // ── IInputImageSelectable ────────────────────────────────────────
+
+        public void SetAvailableInputImages(IReadOnlyList<ImageSourceEntry> images)
+        {
+            _inputImages.Clear();
+            _inputImages.AddRange(images);
+            _cmbInputImage.Items.Clear();
+            foreach (var e in _inputImages) _cmbInputImage.Items.Add(e);
+        }
 
         // ── IStepParamPanel ──────────────────────────────────────────────
 
@@ -158,6 +182,14 @@ namespace Vision.UI
                 _nudFilterSize.Value            = Clamp(s.RunParams.FilterHalfSizeInPixels, (int)_nudFilterSize.Minimum, (int)_nudFilterSize.Maximum);
                 _nudMaxResults.Value            = Clamp(s.RunParams.MaxResults,             (int)_nudMaxResults.Minimum, (int)_nudMaxResults.Maximum);
                 _cmbSelectionMode.SelectedIndex = Math.Max(0, Array.IndexOf(SelectionModes, s.SelectionMode));
+
+                // 현재 스텝의 InputImageKey에 맞는 항목 선택
+                _cmbInputImage.SelectedIndex = -1;
+                for (int i = 0; i < _inputImages.Count; i++)
+                {
+                    if (_inputImages[i].Key == s.InputImageKey)
+                    { _cmbInputImage.SelectedIndex = i; break; }
+                }
             }
             finally { _syncing = false; }
         }
@@ -174,7 +206,9 @@ namespace Vision.UI
             s.RunParams.FilterHalfSizeInPixels = (int)_nudFilterSize.Value;
             s.RunParams.MaxResults             = (int)_nudMaxResults.Value;
             int si = _cmbSelectionMode.SelectedIndex;
-            if (si >= 0 && si < SelectionModes.Length) s.SelectionMode           = SelectionModes[si];
+            if (si >= 0 && si < SelectionModes.Length) s.SelectionMode = SelectionModes[si];
+            int ii = _cmbInputImage.SelectedIndex;
+            s.InputImageKey = (ii >= 0 && ii < _inputImages.Count) ? _inputImages[ii].Key : null;
         }
 
         private static decimal Clamp(decimal v, decimal min, decimal max)

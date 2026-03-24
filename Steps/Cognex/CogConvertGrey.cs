@@ -18,7 +18,7 @@ namespace Vision.Steps.VisionPro
     ///
     /// XML 직렬화 필드: Channel (0=Red, 1=Green, 2=Blue)
     /// </summary>
-    public class CogConvertGray : CogStepBase, IStepSerializable
+    public class CogConvertGrey : CogStepBase, IStepSerializable, IMultiChannelStep
     {
         /// <summary>스텝 고유 이름.</summary>
         public override string Name => "VisionPro.ConvertGray";
@@ -29,26 +29,26 @@ namespace Vision.Steps.VisionPro
         /// <summary>단일 채널 추출 후 그레이스케일 이미지를 출력한다.</summary>
         public override ImageType ProducedOutputType => ImageType.Grey;
 
-        /// <summary>추출 가능한 색상 채널 열거형.</summary>
-        public enum ColorChannel { Red = 0, Green = 1, Blue = 2 }
-
-        /// <summary>추출할 색상 채널 (기본값: Green)</summary>
+        /// <summary>추출할 색상 채널 (기본값: Green, Auto 불가)</summary>
         public ColorChannel Channel { get; set; } = ColorChannel.Green;
 
         // ── IStepSerializable ────────────────────────────────────────────
 
-        /// <summary>선택된 채널 인덱스를 XML에 저장한다.</summary>
+        /// <summary>선택된 채널 인덱스와 InputImageKey를 XML에 저장한다.</summary>
         public void SaveParams(XElement el)
         {
             el.Add(new XElement("Channel", (int)Channel));
+            el.Add(new XElement("InputImageKey", InputImageKey ?? ""));
         }
 
-        /// <summary>XML 요소에서 채널 인덱스를 복원한다.</summary>
+        /// <summary>XML 요소에서 채널 인덱스와 InputImageKey를 복원한다.</summary>
         public void LoadParams(XElement el)
         {
             var s = el.Element("Channel")?.Value;
-            if (s != null && int.TryParse(s, out var v))
+            if (s != null && int.TryParse(s, out var v) && v >= 0)
                 Channel = (ColorChannel)v;
+            var keyEl = el.Element("InputImageKey");
+            InputImageKey = keyEl != null && !string.IsNullOrEmpty(keyEl.Value) ? keyEl.Value : null;
         }
 
         /// <summary>
@@ -76,6 +76,17 @@ namespace Vision.Steps.VisionPro
 
             context.CogImage = plane;
             context.MatImage = null;
+
+            // 선택된 채널을 파이프라인 기본 이미지로 등록
+            string baseKey = "image:" + context.CurrentStepIndex;
+            context.Images[baseKey] = plane;
+
+            // R/G/B 3채널을 모두 등록 (다운스트림 스텝이 채널을 독립적으로 선택 가능)
+            foreach (ColorChannel ch in new[] { ColorChannel.Red, ColorChannel.Green, ColorChannel.Blue })
+            {
+                var chPlane = colorImg.GetPlane((CogImagePlaneConstants)ch);
+                context.Images[baseKey + "." + ch] = chPlane;
+            }
         }
     }
 }

@@ -20,6 +20,47 @@ namespace Vision
     /// </summary>
     public class VisionContext : IDisposable
     {
+        private readonly Dictionary<int, ICogImage> _greyCache = new Dictionary<int, ICogImage>();
+
+        /// <summary>
+        /// 이름 붙은 이미지 저장소.
+        /// 각 이미지 생성 스텝이 자신의 출력을 등록하며, 후속 스텝이 참조한다.
+        /// 키 규칙: "image:-1" = 원본, "image:N" = N번째 스텝 출력
+        /// Color 이미지는 자동으로 "image:N.Red/Green/Blue" 도 등록된다.
+        /// </summary>
+        public Dictionary<string, ICogImage> Images { get; } = new Dictionary<string, ICogImage>();
+
+        /// <summary>현재 실행 중인 스텝의 파이프라인 인덱스. VisionPipeline이 스텝 실행 전 설정한다.</summary>
+        public int CurrentStepIndex { get; set; } = -1;
+
+        /// <summary>
+        /// 이미지를 이름으로 등록한다.
+        /// Color 이미지이면 .Red/.Green/.Blue 채널도 자동 등록한다.
+        /// </summary>
+        public void RegisterImage(string key, ICogImage image)
+        {
+            if (image == null || key == null) return;
+            Images[key] = image;
+            var colorImg = image as CogImage24PlanarColor;
+            if (colorImg != null)
+            {
+                Images[key + ".Red"]   = colorImg.GetPlane(CogImagePlaneConstants.Red);
+                Images[key + ".Green"] = colorImg.GetPlane(CogImagePlaneConstants.Green);
+                Images[key + ".Blue"]  = colorImg.GetPlane(CogImagePlaneConstants.Blue);
+            }
+        }
+
+        /// <summary>
+        /// InputImageKey에 해당하는 이미지를 반환한다.
+        /// 키가 없거나 null이면 CogImage(현재 파이프라인 이미지)를 반환한다.
+        /// </summary>
+        public ICogImage GetInputImage(string key)
+        {
+            if (!string.IsNullOrEmpty(key) && Images.TryGetValue(key, out var img) && img != null)
+                return img;
+            return CogImage;
+        }
+
         /// <summary>
         /// OpenCV Mat 포맷 이미지.
         /// CvStepBase 계열 스텝이 사용하며, CogImage가 있을 경우 자동 변환된다.
@@ -31,6 +72,35 @@ namespace Vision
         /// CogStepBase 계열 스텝이 사용하며, MatImage가 있을 경우 자동 변환된다.
         /// </summary>
         public ICogImage CogImage { get; set; }
+
+        /// <summary>
+        /// 파이프라인 시작 시점의 원본 컬러 이미지.
+        /// VisionPipeline이 실행 직전에 자동 설정한다.
+        /// 채널별 Grey 캐시의 소스 이미지로 사용된다.
+        /// </summary>
+        public CogImage24PlanarColor OriginalColorImage { get; set; }
+
+        /// <summary>
+        /// 지정 채널의 Grey 이미지를 반환한다. 변환 결과는 캐시되어 재사용된다.
+        ///
+        /// channel == Auto(-1) : CogImage를 그대로 반환 (이미 Grey인 경우)
+        /// channel == Red/Green/Blue : OriginalColorImage에서 해당 채널 추출 후 캐시
+        ///
+        /// OriginalColorImage가 없으면 CogImage를 그대로 반환한다 (하위 호환).
+        /// </summary>
+        public ICogImage GetGreyChannel(ColorChannel channel)
+        {
+            if (channel == ColorChannel.Auto || OriginalColorImage == null)
+                return CogImage;
+
+            int key = (int)channel;
+            if (_greyCache.TryGetValue(key, out var cached))
+                return cached;
+
+            var grey = OriginalColorImage.GetPlane((CogImagePlaneConstants)key);
+            _greyCache[key] = grey;
+            return grey;
+        }
 
         /// <summary>
         /// 파이프라인 전체 성공 여부.
@@ -76,6 +146,9 @@ namespace Vision
             MatImage = null;
             (CogImage as IDisposable)?.Dispose();
             CogImage = null;
+            _greyCache.Clear();
+            OriginalColorImage = null;
+            Images.Clear();
         }
     }
 
@@ -162,6 +235,14 @@ namespace Vision
     }
 
     /// <summary>
+    /// R/G/B 3개 채널을 독립적인 Grey 이미지로 출력하는 스텝의 마커 인터페이스.
+    /// VisionContext.Images 에 "image:N.Red", "image:N.Green", "image:N.Blue" 키로 등록한다.
+    /// PipelineEditorForm은 이 인터페이스를 보고 드롭다운에 채널 선택 항목을 추가한다.
+    /// 구현체: CogConvertGrey
+    /// </summary>
+    public interface IMultiChannelStep { }
+
+    /// <summary>
     /// 이미지를 분석하여 결과를 VisionContext.Data에 기록하는 검사 스텝의 마커 인터페이스.
     ///
     /// 이 인터페이스를 구현한 스텝은 PipelineEditorForm의 단일 스텝 테스트 시,
@@ -204,5 +285,24 @@ namespace Vision
         Grey,
         /// <summary>컬러 RGB — CogImage24PlanarColor / CV_8UC3.</summary>
         Color,
+    }
+
+    /// <summary>
+    /// 컬러 이미지에서 추출할 채널.
+    /// CogCaliperStep, CogBlobStep 등 검사 스텝에서 입력 채널 선택에 사용된다.
+    ///
+    /// Auto(-1) : context.CogImage를 그대로 사용 (이미 Grey이거나 ConvertGrey 스텝이 선행된 경우)
+    /// Red/Green/Blue : OriginalColorImage에서 해당 채널을 추출하여 사용
+    /// </summary>
+    public enum ColorChannel
+    {
+        /// <summary>채널 선택 없음 — context.CogImage를 그대로 사용한다.</summary>
+        Auto  = -1,
+        /// <summary>Red 채널 (Plane 0)</summary>
+        Red   =  0,
+        /// <summary>Green 채널 (Plane 1)</summary>
+        Green =  1,
+        /// <summary>Blue 채널 (Plane 2)</summary>
+        Blue  =  2,
     }
 }

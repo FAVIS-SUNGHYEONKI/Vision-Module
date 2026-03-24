@@ -18,7 +18,7 @@ namespace Vision.UI
             {
                 case "VisionPro.Caliper":         return new CogCaliperParamPanel();
                 case "VisionPro.Blob":            return new CogBlobParamPanel();
-                case "VisionPro.ConvertGray":     return new CogConvertGrayParamPanel();
+                case "VisionPro.ConvertGrey":     return new CogConvertGreyParamPanel();
                 case "VisionPro.WeightedRGB":     return new CogWeightedRGBParamPanel();
                 case "VisionPro.CaliperDistance": return new CogCaliperDistanceParamPanel();
                 case "OpenCV.Threshold":          return new CvThresholdParamPanel();

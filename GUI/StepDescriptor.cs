@@ -48,7 +48,9 @@ namespace Vision.UI
         public IVisionStep CreateStep() => _factory();
 
         public override string ToString()
-            => $"[{Category}] {DisplayName}  ({TypeLabel(RequiredInputType)}->{TypeLabel(ProducedOutputType)})";
+            => ProducedOutputType == ImageType.Any
+                ? $"[{Category}] {DisplayName}  ({TypeLabel(RequiredInputType)})"
+                : $"[{Category}] {DisplayName}  ({TypeLabel(RequiredInputType)}->{TypeLabel(ProducedOutputType)})";
 
         internal static string TypeLabel(ImageType t)
         {
