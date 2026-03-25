@@ -22,6 +22,7 @@ namespace Vision.UI
         private ComboBox      _cmbInputImage;
 
         private readonly List<ImageSourceEntry> _inputImages = new List<ImageSourceEntry>();
+        public event EventHandler<string> InputImageKeyChanged;
 
         private bool _syncing;
 
@@ -144,6 +145,12 @@ namespace Vision.UI
                 DropDownStyle = ComboBoxStyle.DropDownList,
             };
             Controls.Add(_cmbInputImage);
+            _cmbInputImage.SelectedIndexChanged += (s, e) =>
+            {
+                var idx = _cmbInputImage.SelectedIndex;
+                InputImageKeyChanged?.Invoke(this,
+                    idx >= 0 && idx < _inputImages.Count ? _inputImages[idx].Key : null);
+            };
 
             Size = new Size(350, y + 40);
         }

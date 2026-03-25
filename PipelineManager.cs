@@ -63,6 +63,7 @@ namespace Vision
         /// <param name="config">추가할 PipelineConfig</param>
         public void Add(PipelineConfig config)
         {
+            config.SaveCallback = () => SaveAll();
             _configs.Add(config);
             _activeIndex = _configs.Count - 1;
         }
@@ -81,62 +82,98 @@ namespace Vision
 
         // ── 저장 ─────────────────────────────────────────────────────────
 
+        // ── 저장 ─────────────────────────────────────────────────────────
+
         /// <summary>
-        /// 현재 관리 중인 모든 파이프라인을 XML 파일로 저장한다.
-        ///
-        /// 각 스텝이 IStepSerializable을 구현하면 SaveParams()를 호출하여
-        /// 스텝별 파라미터(Region, RunParams 등)를 Step 요소에 기록한다.
-        /// 대상 디렉터리가 없으면 자동으로 생성한다.
+        /// 매니페스트(pipelines.xml)와 모든 파이프라인 파일을 저장한다.
+        /// 목록에 없는 고아 파이프라인 파일은 자동으로 삭제한다.
         /// </summary>
         public void SaveAll()
         {
             Directory.CreateDirectory(_folder);
 
-            // 루트 요소에 현재 활성 인덱스를 속성으로 기록
+            // 매니페스트 저장
             var root = new XElement("Pipelines", new XAttribute("active", _activeIndex));
+            foreach (var cfg in _configs)
+                root.Add(new XElement("Pipeline", new XAttribute("name", cfg.Name)));
+            new XDocument(new XDeclaration("1.0", "utf-8", null), root).Save(FilePath);
 
+            // 파이프라인별 파일 저장
+            var activeFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var cfg in _configs)
             {
-                var cfgEl   = new XElement("Pipeline", new XAttribute("name", cfg.Name));
-                var stepsEl = new XElement("Steps");
-
-                foreach (var step in cfg.Steps)
-                {
-                    // type 속성으로 스텝 종류를 식별 (LoadAll에서 팩토리 조회 시 사용)
-                    var stepEl = new XElement("Step", new XAttribute("type", step.Name));
-
-                    // 사용자 정의 표시 이름이 있을 때만 label 속성으로 저장
-                    if (step.DisplayName != step.Name)
-                        stepEl.Add(new XAttribute("label", step.DisplayName));
-
-                    // IStepSerializable을 구현한 스텝만 파라미터를 저장
-                    (step as IStepSerializable)?.SaveParams(stepEl);
-                    stepsEl.Add(stepEl);
-                }
-
-                cfgEl.Add(stepsEl);
-                root.Add(cfgEl);
+                SavePipelineFile(cfg);
+                activeFiles.Add(Path.GetFileName(PipelineFilePath(cfg.Name)));
             }
 
-            new XDocument(new XDeclaration("1.0", "utf-8", null), root).Save(FilePath);
+            // 고아 파일 정리
+            foreach (var file in Directory.GetFiles(_folder, "pipeline_*.xml"))
+                if (!activeFiles.Contains(Path.GetFileName(file)))
+                    try { File.Delete(file); } catch { }
+        }
+
+        /// <summary>
+        /// 지정한 파이프라인 하나만 파일에 저장한다.
+        /// Pipelines[index].Save() 내부에서 호출된다.
+        /// </summary>
+        public void SavePipeline(PipelineConfig config)
+        {
+            Directory.CreateDirectory(_folder);
+            SavePipelineFile(config);
+        }
+
+        /// <summary>
+        /// 파이프라인 이름을 변경하고 구 파일을 삭제한 뒤 새 파일로 저장한다.
+        /// PipelineController.RenamePipeline()에서 호출된다.
+        /// </summary>
+        public void RenamePipeline(int index, string newName)
+        {
+            if (index < 0 || index >= _configs.Count) return;
+            var cfg     = _configs[index];
+            var oldPath = PipelineFilePath(cfg.Name);
+            cfg.Name    = newName;
+            try { if (File.Exists(oldPath)) File.Delete(oldPath); } catch { }
+            Directory.CreateDirectory(_folder);
+            SavePipelineFile(cfg);
+        }
+
+        private string PipelineFilePath(string name)
+            => Path.Combine(_folder, "pipeline_" + SanitizeFileName(name) + ".xml");
+
+        private static string SanitizeFileName(string name)
+        {
+            var invalid = Path.GetInvalidFileNameChars();
+            var sb = new System.Text.StringBuilder();
+            foreach (char c in name)
+                sb.Append(System.Array.IndexOf(invalid, c) >= 0 ? '_' : c);
+            return sb.ToString();
+        }
+
+        private void SavePipelineFile(PipelineConfig config)
+        {
+            var cfgEl   = new XElement("Pipeline", new XAttribute("name", config.Name));
+            var stepsEl = new XElement("Steps");
+
+            foreach (var step in config.Steps)
+            {
+                var stepEl = new XElement("Step", new XAttribute("type", step.Name));
+                if (step.DisplayName != step.Name)
+                    stepEl.Add(new XAttribute("label", step.DisplayName));
+                (step as IStepSerializable)?.SaveParams(stepEl);
+                stepsEl.Add(stepEl);
+            }
+
+            cfgEl.Add(stepsEl);
+            new XDocument(new XDeclaration("1.0", "utf-8", null), cfgEl)
+                .Save(PipelineFilePath(config.Name));
         }
 
         // ── 로드 ─────────────────────────────────────────────────────────
 
         /// <summary>
-        /// XML 파일에서 파이프라인 설정을 로드한다.
-        ///
-        /// 스텝 생성은 외부에서 제공한 stepFactories 딕셔너리를 통해 수행한다.
-        /// 이를 통해 Vision.dll은 GUI 어셈블리(StepDescriptor 등)에 의존하지 않는다.
-        ///
-        /// XML에 기록된 type 속성으로 팩토리를 조회하고, 팩토리가 없는 스텝은 건너뛴다.
-        /// 각 스텝이 IStepSerializable을 구현하면 LoadParams()를 호출하여 파라미터를 복원한다.
-        /// XML 파일이 없으면 아무 작업도 수행하지 않는다.
+        /// 매니페스트를 읽고 각 파이프라인 파일에서 스텝을 로드한다.
+        /// 파일이 없으면 아무 작업도 하지 않는다.
         /// </summary>
-        /// <param name="stepFactories">
-        /// TypeName(스텝 Name) → 스텝 인스턴스 생성 팩토리 딕셔너리.
-        /// 예: { "VisionPro.Caliper" => () => new CogCaliperStep() }
-        /// </param>
         public void LoadAll(IReadOnlyDictionary<string, Func<IVisionStep>> stepFactories)
         {
             _configs.Clear();
@@ -146,11 +183,32 @@ namespace Vision
             try   { root = XDocument.Load(FilePath).Root; }
             catch { return; }
 
-            ParseFromElement(root, stepFactories);
+            _activeIndex = (int?)root.Attribute("active") ?? 0;
+
+            foreach (var el in root.Elements("Pipeline"))
+            {
+                var cfg = new PipelineConfig { Name = (string)el.Attribute("name") ?? "Pipeline" };
+
+                var path = PipelineFilePath(cfg.Name);
+                if (File.Exists(path))
+                {
+                    XElement pipelineEl;
+                    try   { pipelineEl = XDocument.Load(path).Root; }
+                    catch { pipelineEl = null; }
+                    if (pipelineEl != null)
+                        ParseSteps(pipelineEl, cfg, stepFactories);
+                }
+
+                AttachSaveCallback(cfg);
+                _configs.Add(cfg);
+            }
+
+            _activeIndex = Math.Max(0, Math.Min(_activeIndex, _configs.Count - 1));
         }
 
         /// <summary>
-        /// 인메모리 XElement에서 파이프라인 설정을 복원한다.
+        /// 인메모리 XElement(스냅샷)에서 파이프라인 설정을 복원한다.
+        /// 스텝이 XElement 안에 inline으로 포함된 포맷을 사용한다.
         /// PipelineController가 Cancel 시 스냅샷 복원에 사용한다.
         /// </summary>
         public void LoadFromElement(XElement root,
@@ -158,41 +216,41 @@ namespace Vision
         {
             _configs.Clear();
             if (root == null) return;
-            ParseFromElement(root, stepFactories);
-        }
 
-        private void ParseFromElement(XElement root,
-            IReadOnlyDictionary<string, Func<IVisionStep>> stepFactories)
-        {
             _activeIndex = (int?)root.Attribute("active") ?? 0;
 
-            foreach (var cfgEl in root.Elements("Pipeline"))
+            foreach (var el in root.Elements("Pipeline"))
             {
-                var cfg  = new PipelineConfig();
-                cfg.Name = (string)cfgEl.Attribute("name") ?? "Pipeline";
-
-                foreach (var stepEl in cfgEl.Element("Steps")?.Elements("Step")
-                                       ?? Enumerable.Empty<XElement>())
-                {
-                    string type = (string)stepEl.Attribute("type");
-
-                    Func<IVisionStep> factory;
-                    if (type == null || !stepFactories.TryGetValue(type, out factory)) continue;
-
-                    var step = factory();
-
-                    string label = (string)stepEl.Attribute("label");
-                    if (!string.IsNullOrEmpty(label))
-                        step.DisplayName = label;
-
-                    (step as IStepSerializable)?.LoadParams(stepEl);
-                    cfg.Steps.Add(step);
-                }
-
+                var cfg = new PipelineConfig { Name = (string)el.Attribute("name") ?? "Pipeline" };
+                ParseSteps(el, cfg, stepFactories);
+                AttachSaveCallback(cfg);
                 _configs.Add(cfg);
             }
 
             _activeIndex = Math.Max(0, Math.Min(_activeIndex, _configs.Count - 1));
         }
+
+        private void ParseSteps(XElement pipelineEl, PipelineConfig cfg,
+            IReadOnlyDictionary<string, Func<IVisionStep>> stepFactories)
+        {
+            foreach (var stepEl in pipelineEl.Element("Steps")?.Elements("Step")
+                                   ?? Enumerable.Empty<XElement>())
+            {
+                string type = (string)stepEl.Attribute("type");
+                Func<IVisionStep> factory;
+                if (type == null || !stepFactories.TryGetValue(type, out factory)) continue;
+
+                var step  = factory();
+                string label = (string)stepEl.Attribute("label");
+                if (!string.IsNullOrEmpty(label))
+                    step.DisplayName = label;
+
+                (step as IStepSerializable)?.LoadParams(stepEl);
+                cfg.Steps.Add(step);
+            }
+        }
+
+        private void AttachSaveCallback(PipelineConfig cfg)
+            => cfg.SaveCallback = () => SavePipeline(cfg);
     }
 }

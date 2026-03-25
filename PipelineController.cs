@@ -43,32 +43,18 @@ namespace Vision
     {
         private readonly PipelineManager      _manager;
         private readonly List<StepDescriptor> _stepDescriptors = new List<StepDescriptor>();
-        private          VisionPipeline       _cachedPipeline;
-
-        /// <summary>현재 로드된 입력 이미지. GetParamPanel의 입력 이미지 목록 구성에 사용.</summary>
-        public ICogImage InputImage { get; private set; }
-
-        /// <summary>파라미터 패널 입력 이미지 목록 구성을 위해 로드된 이미지를 등록한다.</summary>
-        public void SetInputImage(ICogImage image) { InputImage = image; }
+        private readonly Dictionary<int, VisionPipeline> _pipelineCache = new Dictionary<int, VisionPipeline>();
 
         // ── 공개 속성 ────────────────────────────────────────────────────
-
-        /// <summary>현재 활성 파이프라인의 스텝 목록 (읽기 전용).</summary>
-        public IReadOnlyList<IVisionStep> Steps
-            => _manager.ActivePipeline?.Steps ?? (IReadOnlyList<IVisionStep>)new List<IVisionStep>();
 
         /// <summary>관리 중인 파이프라인 설정 목록 (읽기 전용).</summary>
         public IReadOnlyList<PipelineConfig> Pipelines => _manager.Configs;
 
         /// <summary>
-        /// 현재 활성 파이프라인의 인덱스.
-        /// 여러 파이프라인이 있을 때 전환에 사용한다.
+        /// ShowEditor에서 마지막으로 선택된 파이프라인 인덱스 (읽기 전용).
+        /// 편집기 OK 후 ComboBox 동기화 등에만 사용한다.
         /// </summary>
-        public int ActivePipelineIndex
-        {
-            get => _manager.ActiveIndex;
-            set { _manager.ActiveIndex = value; RebuildPipeline(); }
-        }
+        public int ActivePipelineIndex => _manager.ActiveIndex;
 
         /// <summary>pipelines.xml의 전체 파일 경로.</summary>
         public string ConfigFilePath => _manager.FilePath;
@@ -151,7 +137,7 @@ namespace Vision
                 if (dr == DialogResult.OK)
                 {
                     _manager.ActiveIndex = form.SelectedPipelineIndex;
-                    RebuildPipeline();
+                    InvalidatePipelineCache();
                 }
                 else
                 {
@@ -200,34 +186,48 @@ namespace Vision
 
             _manager.LoadFromElement(snapshot, factories);
             _manager.SaveAll();   // 폼에서 중간 저장된 파일도 이전 상태로 덮어씀
-            RebuildPipeline();
+            InvalidatePipelineCache();
         }
 
         // ── 파이프라인 캐시 ──────────────────────────────────────────────
 
-        /// <summary>
-        /// 현재 활성 파이프라인의 스텝으로 VisionPipeline 캐시를 재구성한다.
-        /// 스텝 구성이 바뀔 때마다 호출해야 한다.
-        /// </summary>
-        private void RebuildPipeline()
+        /// <summary>모든 파이프라인 캐시를 비운다. 스텝 구성 변경 시 호출한다.</summary>
+        private void InvalidatePipelineCache()
         {
-            _cachedPipeline?.Dispose();
-            _cachedPipeline = new VisionPipeline();
-            var pipeline = _manager.ActivePipeline;
-            if (pipeline != null)
-                foreach (var step in pipeline.Steps)
-                    _cachedPipeline.AddStep(step);
+            foreach (var vp in _pipelineCache.Values)
+                vp.Dispose();
+            _pipelineCache.Clear();
+        }
+
+        /// <summary>지정 인덱스의 VisionPipeline을 캐시에서 가져오거나 새로 빌드한다.</summary>
+        private VisionPipeline GetOrBuildPipeline(int pipelineIndex)
+        {
+            VisionPipeline cached;
+            if (_pipelineCache.TryGetValue(pipelineIndex, out cached))
+                return cached;
+
+            var config = pipelineIndex >= 0 && pipelineIndex < _manager.Configs.Count
+                ? _manager.Configs[pipelineIndex] : null;
+
+            var vp = new VisionPipeline();
+            if (config != null)
+                foreach (var step in config.Steps)
+                    vp.AddStep(step);
+
+            _pipelineCache[pipelineIndex] = vp;
+            return vp;
         }
 
         // ── 파이프라인 실행 ──────────────────────────────────────────────
 
         /// <summary>
-        /// 현재 활성 파이프라인을 비동기로 실행하고 타입화된 결과를 반환한다.
+        /// 지정한 파이프라인을 비동기로 실행하고 타입화된 결과를 반환한다.
         ///
         /// 파이프라인이 비어 있으면 VisionResult.Empty를 반환한다.
         /// 각 스텝 내부 예외는 VisionResult.Errors에 기록된다.
         /// </summary>
         /// <param name="image">처리할 입력 이미지 (ICogImage). null 불가.</param>
+        /// <param name="pipelineIndex">실행할 파이프라인 인덱스 (0-based).</param>
         /// <returns>
         /// 타입화된 검사 결과.
         /// result.IsSuccess — 오류 없이 완료 여부
@@ -235,39 +235,93 @@ namespace Vision
         /// result.Blobs — Blob 검출 목록
         /// result.Distances — 거리 측정 목록
         /// </returns>
-        public async Task<VisionResult> RunAsync(ICogImage image)
+        public async Task<VisionResult> RunAsync(int pipelineIndex)
         {
-            if (image == null) throw new ArgumentNullException("image");
-
-            var pipeline = _manager.ActivePipeline;
-            if (pipeline == null || pipeline.Steps.Count == 0)
+            if (pipelineIndex < 0 || pipelineIndex >= _manager.Configs.Count)
                 return VisionResult.Empty;
 
-            if (_cachedPipeline == null)
-                RebuildPipeline();
+            var config = _manager.Configs[pipelineIndex];
+            if (config.InputImage == null)
+                throw new InvalidOperationException(
+                    $"Pipeline[{pipelineIndex}] InputImage가 설정되지 않았습니다. " +
+                    "Pipelines[index].SetInputImage(image)를 먼저 호출하세요.");
+            if (config.Steps.Count == 0)
+                return VisionResult.Empty;
 
-            using (var ctx = new VisionContext { CogImage = image })
+            var vp = GetOrBuildPipeline(pipelineIndex);
+            using (var ctx = BuildContext(pipelineIndex))
             {
-                await _cachedPipeline.RunAsync(ctx);
-                return VisionResult.FromContext(ctx, pipeline.Steps);
+                await vp.RunAsync(ctx);
+                return VisionResult.FromContext(ctx, config.Steps);
             }
         }
 
-        // ── 결과 렌더링 ──────────────────────────────────────────────────
+        // ── 입력 이미지 목록 / 선택 ─────────────────────────────────────
 
         /// <summary>
-        /// VisionResult의 모든 결과 그래픽을 CogDisplay에 그린다.
+        /// 지정한 스텝에서 선택 가능한 입력 이미지 목록을 반환한다.
         ///
-        /// 그리기 전에 display.StaticGraphics를 자동으로 초기화한다.
-        /// 에지 → 초록 십자 마커, Blob → 노란 외곽선, 거리 → 마젠타 선 + 끝점 마커.
+        /// 반환 목록을 ComboBox 등에 바인딩하고, 사용자가 선택한 항목의 Key를
+        /// SetStepInputImageKey()에 전달하면 된다.
+        ///
+        /// 사용 예:
+        ///   var entries = controller.GetAvailableInputImages(step);
+        ///   comboBox.DataSource  = entries;
+        ///   comboBox.DisplayMember = "Label";
+        ///   comboBox.ValueMember   = "Key";
         /// </summary>
-        /// <param name="display">그릴 대상 Cognex CogDisplay 컨트롤.</param>
-        /// <param name="result">렌더링할 검사 결과 (RunAsync 반환값).</param>
-        public void DrawResults(Cognex.VisionPro.Display.CogDisplay display, VisionResult result)
+        /// <param name="step">입력 이미지 목록을 조회할 스텝.</param>
+        /// <returns>선택 가능한 입력 이미지 항목 목록. 스텝을 찾을 수 없으면 빈 목록.</returns>
+        public IReadOnlyList<Vision.UI.ImageSourceEntry> GetAvailableInputImages(IVisionStep step)
         {
-            if (display == null || result == null) return;
-            display.StaticGraphics.Clear();
-            DisplayHelper.DrawAllResults(display, result);
+            int pipelineIdx, stepIdx;
+            if (!TryFindStep(step, out pipelineIdx, out stepIdx))
+                return new List<Vision.UI.ImageSourceEntry>();
+
+            var requiredType = (step as IImageTypedStep)?.RequiredInputType ?? ImageType.Any;
+            return BuildAvailableInputImages(pipelineIdx, stepIdx, requiredType);
+        }
+
+        /// <summary>
+        /// ImageSourceEntry.Key 문자열에 해당하는 실제 ICogImage를 반환한다.
+        ///
+        /// "image:-1" / "image:-1.Red/Green/Blue" → 파이프라인 실행 없이 즉시 반환.
+        /// "image:N" → N번 스텝 출력을 생성하는 데 필요한 처리 스텝만 실행 후 반환.
+        ///
+        /// 사용 예:
+        ///   var entries = controller.GetAvailableInputImages(step);
+        ///   comboBox.DataSource    = entries;
+        ///   comboBox.DisplayMember = "Label";
+        ///   comboBox.ValueMember   = "Key";
+        ///   // 콤보 선택 시:
+        ///   var key = (string)comboBox.SelectedValue;
+        ///   int pipelineIndex = 0;
+        ///   ICogImage img = controller.ResolveInputImage(key, pipelineIndex);
+        ///   cogDisplay.Image = img;
+        /// </summary>
+        /// <param name="key">ImageSourceEntry.Key (예: "image:-1", "image:0", "image:-1.Green").</param>
+        /// <param name="pipelineIndex">"image:N" 키 처리 시 참조할 파이프라인 인덱스.</param>
+        /// <returns>해당 이미지. InputImage 미설정이거나 키가 유효하지 않으면 null.</returns>
+        public ICogImage ResolveInputImage(string key, int pipelineIndex)
+        {
+            if (pipelineIndex < 0 || pipelineIndex >= _manager.Configs.Count) return null;
+            if (_manager.Configs[pipelineIndex].InputImage == null) return null;
+
+            var direct = ResolveStaticInputImage(key, pipelineIndex);
+            if (direct != null) return direct;
+
+            int refStepIdx;
+            if (!TryParseStepImageKey(key, out refStepIdx)) return null;
+            if (pipelineIndex < 0 || pipelineIndex >= _manager.Configs.Count) return null;
+
+            var ctx      = BuildContext(pipelineIndex);
+            var required = new System.Collections.Generic.SortedSet<int>();
+            CollectRequiredSteps(refStepIdx, required, pipelineIndex);
+            ExecuteSteps(ctx, required, pipelineIndex);
+
+            ICogImage result;
+            ctx.Images.TryGetValue(key, out result);
+            return result;
         }
 
         // ── 파라미터 패널 ────────────────────────────────────────────────
@@ -298,28 +352,50 @@ namespace Vision
             var imageSelectable = ctrl as Vision.UI.IInputImageSelectable;
             if (imageSelectable != null)
             {
-                int stepIdx       = IndexOfStep(step);
-                var requiredType  = (step as IImageTypedStep)?.RequiredInputType ?? ImageType.Any;
-                var available     = BuildAvailableInputImages(stepIdx, requiredType);
-                imageSelectable.SetAvailableInputImages(available);
+                int pipelineIdx, stepIdx;
+                if (TryFindStep(step, out pipelineIdx, out stepIdx))
+                {
+                    var requiredType = (step as IImageTypedStep)?.RequiredInputType ?? ImageType.Any;
+                    var available    = BuildAvailableInputImages(pipelineIdx, stepIdx, requiredType);
+                    imageSelectable.SetAvailableInputImages(available);
+                }
             }
 
             (ctrl as Vision.UI.IStepParamPanel)?.BindStep(step);
             return ctrl;
         }
 
-        private int IndexOfStep(IVisionStep step)
+        /// <summary>
+        /// 스텝 인스턴스가 속한 파이프라인 인덱스와 스텝 인덱스를 반환한다.
+        /// 모든 파이프라인을 탐색한다.
+        /// </summary>
+        private bool TryFindStep(IVisionStep step, out int pipelineIdx, out int stepIdx)
         {
-            var steps = Steps;
-            for (int i = 0; i < steps.Count; i++)
-                if (steps[i] == step) return i;
-            return -1;
+            var configs = _manager.Configs;
+            for (int p = 0; p < configs.Count; p++)
+            {
+                var steps = configs[p].Steps;
+                for (int s = 0; s < steps.Count; s++)
+                {
+                    if (steps[s] == step)
+                    {
+                        pipelineIdx = p;
+                        stepIdx     = s;
+                        return true;
+                    }
+                }
+            }
+            pipelineIdx = -1;
+            stepIdx     = -1;
+            return false;
         }
 
-        private List<Vision.UI.ImageSourceEntry> BuildAvailableInputImages(int stepIdx, ImageType requiredType)
+        private List<Vision.UI.ImageSourceEntry> BuildAvailableInputImages(
+            int pipelineIndex, int stepIdx, ImageType requiredType)
         {
-            var result     = new List<Vision.UI.ImageSourceEntry>();
-            var inputType  = InputImage is CogImage24PlanarColor ? ImageType.Color : ImageType.Grey;
+            var result    = new List<Vision.UI.ImageSourceEntry>();
+            var inputImg  = _manager.Configs[pipelineIndex].InputImage;
+            var inputType = inputImg is CogImage24PlanarColor ? ImageType.Color : ImageType.Grey;
 
             void AddEntry(string key, ImageType type, string label)
             {
@@ -340,7 +416,7 @@ namespace Vision
 
             AddWithChannels("image:-1", inputType, "원본 이미지");
 
-            var steps = Steps;
+            var steps = _manager.Configs[pipelineIndex].Steps;
             for (int i = 0; i < stepIdx && i < steps.Count; i++)
             {
                 var s       = steps[i];
@@ -401,19 +477,23 @@ namespace Vision
         /// </summary>
         public ICogImage GetStepInputImage(IVisionStep step)
         {
-            if (InputImage == null || step == null) return null;
+            if (step == null) return null;
+
+            int pipelineIdx, stepIdx;
+            if (!TryFindStep(step, out pipelineIdx, out stepIdx)) return null;
+            if (_manager.Configs[pipelineIdx].InputImage == null) return null;
 
             var key    = GetInputImageKey(step);
-            var direct = ResolveStaticInputImage(key);
+            var direct = ResolveStaticInputImage(key, pipelineIdx);
             if (direct != null) return direct;
 
             int refStepIdx;
             if (!TryParseStepImageKey(key, out refStepIdx)) return null;
 
-            var ctx = BuildContext();
+            var ctx      = BuildContext(pipelineIdx);
             var required = new System.Collections.Generic.SortedSet<int>();
-            CollectRequiredSteps(refStepIdx, required);
-            ExecuteSteps(ctx, required);
+            CollectRequiredSteps(refStepIdx, required, pipelineIdx);
+            ExecuteSteps(ctx, required, pipelineIdx);
 
             ICogImage result;
             ctx.Images.TryGetValue(key, out result);
@@ -442,16 +522,16 @@ namespace Vision
         /// </summary>
         public StepResult RunStep(IVisionStep step)
         {
-            if (InputImage == null)
-                return StepResult.Failure("InputImage가 설정되지 않았습니다.");
             if (step == null)
                 return StepResult.Failure("step이 null입니다.");
 
-            int stepIdx = IndexOfStep(step);
-            if (stepIdx < 0)
+            int pipelineIdx, stepIdx;
+            if (!TryFindStep(step, out pipelineIdx, out stepIdx))
                 return StepResult.Failure("파이프라인에 등록되지 않은 스텝입니다.");
+            if (_manager.Configs[pipelineIdx].InputImage == null)
+                return StepResult.Failure($"Pipeline[{pipelineIdx}] InputImage가 설정되지 않았습니다.");
 
-            var ctx = BuildContext();
+            var ctx = BuildContext(pipelineIdx);
 
             // 의존 처리 스텝 실행
             var inputKey = GetInputImageKey(step);
@@ -459,8 +539,8 @@ namespace Vision
             if (TryParseStepImageKey(inputKey, out refStepIdx))
             {
                 var required = new System.Collections.Generic.SortedSet<int>();
-                CollectRequiredSteps(refStepIdx, required);
-                ExecuteSteps(ctx, required);
+                CollectRequiredSteps(refStepIdx, required, pipelineIdx);
+                ExecuteSteps(ctx, required, pipelineIdx);
 
                 if (!ctx.IsSuccess)
                     return StepResult.Failure(
@@ -472,7 +552,7 @@ namespace Vision
             if (!string.IsNullOrEmpty(inputKey))
                 ctx.Images.TryGetValue(inputKey, out inputImg);
             if (inputImg == null)
-                inputImg = ResolveStaticInputImage(inputKey) ?? ctx.CogImage ?? InputImage;
+                inputImg = ResolveStaticInputImage(inputKey, pipelineIdx) ?? ctx.CogImage;
 
             // 스텝 실행
             int errsBefore = ctx.Errors.Count;
@@ -501,79 +581,22 @@ namespace Vision
             };
         }
 
-        /// <summary>
-        /// 현재 파이프라인에서 타입 T에 해당하는 스텝 전체를 순서대로 반환한다.
-        ///
-        /// 사용 예:
-        ///   var calipers = _controller.GetSteps&lt;CogCaliperStep&gt;();
-        ///   foreach (var c in calipers) { ... }
-        /// </summary>
-        /// <typeparam name="T">찾을 스텝 타입 (IVisionStep 구현체).</typeparam>
-        /// <returns>타입 T인 스텝 목록. 없으면 빈 목록.</returns>
-        public IReadOnlyList<T> GetSteps<T>() where T : class, IVisionStep
-        {
-            var result = new List<T>();
-            foreach (var step in Steps)
-            {
-                var typed = step as T;
-                if (typed != null) result.Add(typed);
-            }
-            return result;
-        }
-
-        /// <summary>
-        /// 현재 파이프라인에서 타입 T에 해당하는 N번째(0-based) 스텝을 반환한다.
-        ///
-        /// 사용 예:
-        ///   var caliper = _controller.GetStep&lt;CogCaliperStep&gt;(0); // 첫 번째 Caliper 스텝
-        ///   var result  = _controller.RunStep(caliper);
-        /// </summary>
-        /// <typeparam name="T">찾을 스텝 타입 (IVisionStep 구현체).</typeparam>
-        /// <param name="index">해당 타입 내 0-based 인덱스.</param>
-        /// <returns>찾은 스텝. 없으면 null.</returns>
-        public T GetStep<T>(int index) where T : class, IVisionStep
-        {
-            int count = 0;
-            foreach (var step in Steps)
-            {
-                var typed = step as T;
-                if (typed == null) continue;
-                if (count++ == index) return typed;
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// 하위 호환용. 지정한 타입의 N번째 스텝 입력 이미지를 반환한다.
-        /// 내부적으로 GetStepInputImage(IVisionStep)에 위임한다.
-        /// </summary>
-        public ICogImage GetStepInputImage<T>(int index) where T : class, IVisionStep
-        {
-            int count = 0;
-            foreach (var step in Steps)
-            {
-                if (!(step is T)) continue;
-                if (count++ != index) continue;
-                return GetStepInputImage(step);
-            }
-            return null;
-        }
-
         // ── 내부 공통 실행 헬퍼 ─────────────────────────────────────────
 
-        private VisionContext BuildContext()
+        private VisionContext BuildContext(int pipelineIndex)
         {
-            var ctx = new VisionContext { CogImage = InputImage };
-            ctx.RegisterImage("image:-1", InputImage);
-            var colorSrc = InputImage as CogImage24PlanarColor;
+            var img = _manager.Configs[pipelineIndex].InputImage;
+            var ctx = new VisionContext { CogImage = img };
+            ctx.RegisterImage("image:-1", img);
+            var colorSrc = img as CogImage24PlanarColor;
             if (colorSrc != null) ctx.OriginalColorImage = colorSrc;
             return ctx;
         }
 
         private void ExecuteSteps(VisionContext ctx,
-            System.Collections.Generic.IEnumerable<int> stepIndices)
+            System.Collections.Generic.IEnumerable<int> stepIndices, int pipelineIndex)
         {
-            var steps = Steps;
+            var steps = _manager.Configs[pipelineIndex].Steps;
             foreach (int i in stepIndices)
             {
                 ctx.CurrentStepIndex = i;
@@ -584,9 +607,9 @@ namespace Vision
 
         /// <summary>stepIdx 스텝의 출력을 생성하는 데 필요한 스텝 인덱스를 재귀적으로 수집한다.</summary>
         private void CollectRequiredSteps(int stepIdx,
-            System.Collections.Generic.SortedSet<int> required)
+            System.Collections.Generic.SortedSet<int> required, int pipelineIndex)
         {
-            var steps = Steps;
+            var steps = _manager.Configs[pipelineIndex].Steps;
             if (stepIdx < 0 || stepIdx >= steps.Count) return;
             if (required.Contains(stepIdx)) return;
             if (steps[stepIdx] is IInspectionStep) return;
@@ -595,7 +618,7 @@ namespace Vision
 
             int depIdx;
             if (TryParseStepImageKey(GetInputImageKey(steps[stepIdx]), out depIdx))
-                CollectRequiredSteps(depIdx, required);
+                CollectRequiredSteps(depIdx, required, pipelineIndex);
         }
 
         private static string GetInputImageKey(IVisionStep step)
@@ -607,12 +630,12 @@ namespace Vision
             return null;
         }
 
-        private ICogImage ResolveStaticInputImage(string key)
+        private ICogImage ResolveStaticInputImage(string key, int pipelineIndex)
         {
-            if (string.IsNullOrEmpty(key) || key == "image:-1")
-                return InputImage;
+            var img = _manager.Configs[pipelineIndex].InputImage;
+            if (string.IsNullOrEmpty(key) || key == "image:-1") return img;
 
-            var colorImg = InputImage as CogImage24PlanarColor;
+            var colorImg = img as CogImage24PlanarColor;
             if (colorImg != null)
             {
                 if (key == "image:-1.Red")   return colorImg.GetPlane(CogImagePlaneConstants.Red);
@@ -651,7 +674,7 @@ namespace Vision
             foreach (var desc in _stepDescriptors)
                 factories[desc.TypeName] = desc.CreateStep;
             _manager.LoadAll(factories);
-            RebuildPipeline();
+            InvalidatePipelineCache();
         }
 
         // ── 다중 파이프라인 관리 ─────────────────────────────────────────
@@ -669,14 +692,15 @@ namespace Vision
         }
 
         /// <summary>
-        /// 활성 파이프라인을 복제하여 목록 끝에 추가한다.
+        /// 지정 인덱스 파이프라인을 복제하여 목록 끝에 추가한다.
         /// 스텝 파라미터(IStepSerializable)도 함께 복사된다.
         /// </summary>
+        /// <param name="sourceIndex">복제 원본 파이프라인 인덱스 (0-based).</param>
         /// <param name="newName">복제본 이름. null이면 원본 이름 + " (복사본)".</param>
-        public void DuplicateActivePipeline(string newName = null)
+        public void DuplicatePipeline(int sourceIndex, string newName = null)
         {
-            var src = _manager.ActivePipeline;
-            if (src == null) return;
+            if (sourceIndex < 0 || sourceIndex >= _manager.Configs.Count) return;
+            var src = _manager.Configs[sourceIndex];
 
             var copyName = newName ?? (src.Name + " (복사본)");
             var copy     = new PipelineConfig { Name = copyName };
@@ -722,7 +746,7 @@ namespace Vision
         {
             if (index < 0 || index >= _manager.Configs.Count) return;
             if (!string.IsNullOrWhiteSpace(newName))
-                _manager.Configs[index].Name = newName;
+                _manager.RenamePipeline(index, newName);
         }
 
         // ── 내부 유틸 ────────────────────────────────────────────────────

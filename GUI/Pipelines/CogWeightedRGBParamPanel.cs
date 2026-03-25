@@ -24,6 +24,7 @@ namespace Vision.UI
         private IVisionStep     _boundStep;
 
         private readonly List<ImageSourceEntry> _inputImages = new List<ImageSourceEntry>();
+        public event EventHandler<string> InputImageKeyChanged;
 
         private static readonly (string Label, double R, double G, double B)[] Presets =
         {
@@ -60,6 +61,12 @@ namespace Vision.UI
             Controls.Add(new Label { Text = "입력 이미지:", Location = new Point(x0, y + 3), Size = new Size(80, 16) });
             _cmbInputImage = new ComboBox { Location = new Point(x0 + 84, y), Size = new Size(230, 21), DropDownStyle = ComboBoxStyle.DropDownList };
             Controls.Add(_cmbInputImage);
+            _cmbInputImage.SelectedIndexChanged += (s, e) =>
+            {
+                var idx = _cmbInputImage.SelectedIndex;
+                InputImageKeyChanged?.Invoke(this,
+                    idx >= 0 && idx < _inputImages.Count ? _inputImages[idx].Key : null);
+            };
             y += 32;
 
             Size = new Size(340, y);

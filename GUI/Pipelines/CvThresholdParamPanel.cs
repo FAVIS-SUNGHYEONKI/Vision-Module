@@ -18,6 +18,7 @@ namespace Vision.UI
         private ComboBox      _cmbInputImage;
 
         private readonly List<ImageSourceEntry> _inputImages = new List<ImageSourceEntry>();
+        public event EventHandler<string> InputImageKeyChanged;
 
         private static readonly ThresholdTypes[] Types =
         {
@@ -53,6 +54,12 @@ namespace Vision.UI
             AddLabel("입력 이미지:", LblX, y + 3, LblW);
             _cmbInputImage = new ComboBox { Location = new System.Drawing.Point(CtrlX, y), Size = new System.Drawing.Size(CtrlW + 40, 21), DropDownStyle = ComboBoxStyle.DropDownList };
             Controls.Add(_cmbInputImage);
+            _cmbInputImage.SelectedIndexChanged += (s, e) =>
+            {
+                var idx = _cmbInputImage.SelectedIndex;
+                InputImageKeyChanged?.Invoke(this,
+                    idx >= 0 && idx < _inputImages.Count ? _inputImages[idx].Key : null);
+            };
 
             Size = new System.Drawing.Size(370, y + 50);
         }

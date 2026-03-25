@@ -15,6 +15,7 @@ namespace Vision.UI
         private ComboBox _cmbInputImage;
 
         private readonly List<ImageSourceEntry> _inputImages = new List<ImageSourceEntry>();
+        public event EventHandler<string> InputImageKeyChanged;
 
         private static readonly ColorChannel[] Channels =
         {
@@ -45,6 +46,12 @@ namespace Vision.UI
             Controls.Add(new Label { Text = "입력 이미지:", Location = new Point(LblX, y + 3), Size = new Size(LblW, 16), AutoSize = false });
             _cmbInputImage = new ComboBox { Location = new Point(CtrlX, y), Size = new Size(CtrlW + 40, 21), DropDownStyle = ComboBoxStyle.DropDownList };
             Controls.Add(_cmbInputImage);
+            _cmbInputImage.SelectedIndexChanged += (s, e) =>
+            {
+                var idx = _cmbInputImage.SelectedIndex;
+                InputImageKeyChanged?.Invoke(this,
+                    idx >= 0 && idx < _inputImages.Count ? _inputImages[idx].Key : null);
+            };
 
             Size = new Size(380, y + 50);
         }

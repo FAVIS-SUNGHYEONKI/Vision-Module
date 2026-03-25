@@ -157,7 +157,7 @@
     <Compile Include="GUI\Pipelines\CogCaliperDistanceParamPanel.cs">
       <SubType>UserControl</SubType>
     </Compile>
-    <Compile Include="GUI\Pipelines\StepParamPanelFactory.cs" />
+<Compile Include="GUI\Pipelines\StepParamPanelFactory.cs" />
     <Compile Include="GUI\PipelineEditorForm.cs">
       <SubType>Form</SubType>
     </Compile>

@@ -30,5 +30,12 @@ namespace Vision.UI
     {
         /// <summary>선택 가능한 입력 이미지 목록을 패널에 전달한다. BindStep 이후 호출된다.</summary>
         void SetAvailableInputImages(System.Collections.Generic.IReadOnlyList<ImageSourceEntry> images);
+
+        /// <summary>
+        /// 사용자가 입력 이미지 콤보를 변경할 때 발생한다.
+        /// EventArgs는 선택된 ImageSourceEntry.Key (예: "image:-1", "image:0").
+        /// StepConfigPanel이 이 이벤트를 구독해 CogDisplay를 갱신한다.
+        /// </summary>
+        event System.EventHandler<string> InputImageKeyChanged;
     }
 }
