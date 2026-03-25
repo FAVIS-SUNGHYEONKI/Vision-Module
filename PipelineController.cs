@@ -389,77 +389,202 @@ namespace Vision
             _manager.SaveAll();
         }
 
-        // ── 스텝 입력 이미지 ─────────────────────────────────────────────
+        // ── 스텝 단위 Image / Result API ────────────────────────────────
 
         /// <summary>
-        /// 지정한 타입의 N번째 스텝에 설정된 입력 이미지를 반환한다.
+        /// 지정한 스텝에 설정된 입력 이미지를 반환한다.
         ///
         /// InputImageKey가 원본 이미지 계열("image:-1", "image:-1.Red/Green/Blue")이면
         /// 파이프라인 실행 없이 즉시 반환한다.
-        /// InputImageKey가 처리 스텝 출력("image:N")을 가리키면
-        /// 해당 이미지가 생성되기까지의 처리 스텝들을 순서대로 실행한 뒤 반환한다.
+        /// InputImageKey가 처리 스텝 출력("image:N")을 가리키면 해당 이미지를 생성하는 데
+        /// 필요한 처리 스텝만 의존성 순서대로 실행한 뒤 반환한다.
+        /// </summary>
+        public ICogImage GetStepInputImage(IVisionStep step)
+        {
+            if (InputImage == null || step == null) return null;
+
+            var key    = GetInputImageKey(step);
+            var direct = ResolveStaticInputImage(key);
+            if (direct != null) return direct;
+
+            int refStepIdx;
+            if (!TryParseStepImageKey(key, out refStepIdx)) return null;
+
+            var ctx = BuildContext();
+            var required = new System.Collections.Generic.SortedSet<int>();
+            CollectRequiredSteps(refStepIdx, required);
+            ExecuteSteps(ctx, required);
+
+            ICogImage result;
+            ctx.Images.TryGetValue(key, out result);
+            return result;
+        }
+
+        /// <summary>
+        /// 지정한 처리 스텝(WeightedRGB, ConvertGrey, Threshold 등)이 생산하는 출력 이미지를 반환한다.
+        /// 검사 스텝이면 null을 반환한다.
+        /// 내부적으로 RunStep을 호출한다.
+        /// </summary>
+        public ICogImage GetStepOutputImage(IVisionStep step)
+            => RunStep(step).OutputImage;
+
+        /// <summary>
+        /// 지정한 스텝을 실행하고 입력 이미지, 출력 이미지, 검사 결과를 포함한
+        /// StepResult를 반환한다.
+        ///
+        /// 스텝의 InputImageKey가 처리 스텝 출력을 참조하는 경우 해당 의존 스텝을
+        /// 먼저 실행한다 (전체 파이프라인이 아닌 필요한 스텝만).
         ///
         /// 사용 예:
         ///   _controller.SetInputImage(image);
-        ///   var img = _controller.GetStepInputImage&lt;CogCaliperStep&gt;(0);
-        ///   var img = _controller.GetStepInputImage&lt;CogBlobStep&gt;(1);
+        ///   var result = _controller.RunStep(_controller.Steps[2]);
+        ///   cogDisplay.Image = result.InputImage;
         /// </summary>
-        /// <typeparam name="T">입력 이미지를 조회할 스텝 타입.</typeparam>
-        /// <param name="index">해당 타입 스텝의 순서 인덱스 (0-based).</param>
-        /// <returns>
-        /// 스텝의 입력 이미지.
-        /// index 범위 초과 또는 InputImage 미설정 시 null.
-        /// </returns>
+        public StepResult RunStep(IVisionStep step)
+        {
+            if (InputImage == null)
+                return StepResult.Failure("InputImage가 설정되지 않았습니다.");
+            if (step == null)
+                return StepResult.Failure("step이 null입니다.");
+
+            int stepIdx = IndexOfStep(step);
+            if (stepIdx < 0)
+                return StepResult.Failure("파이프라인에 등록되지 않은 스텝입니다.");
+
+            var ctx = BuildContext();
+
+            // 의존 처리 스텝 실행
+            var inputKey = GetInputImageKey(step);
+            int refStepIdx;
+            if (TryParseStepImageKey(inputKey, out refStepIdx))
+            {
+                var required = new System.Collections.Generic.SortedSet<int>();
+                CollectRequiredSteps(refStepIdx, required);
+                ExecuteSteps(ctx, required);
+
+                if (!ctx.IsSuccess)
+                    return StepResult.Failure(
+                        ctx.Errors.Count > 0 ? ctx.Errors[ctx.Errors.Count - 1] : "선행 스텝 실패");
+            }
+
+            // 스텝 실행 전 입력 이미지 캡처
+            ICogImage inputImg = null;
+            if (!string.IsNullOrEmpty(inputKey))
+                ctx.Images.TryGetValue(inputKey, out inputImg);
+            if (inputImg == null)
+                inputImg = ResolveStaticInputImage(inputKey) ?? ctx.CogImage ?? InputImage;
+
+            // 스텝 실행
+            int errsBefore = ctx.Errors.Count;
+            ctx.CurrentStepIndex = stepIdx;
+            step.Execute(ctx);
+
+            bool stepOk = ctx.Errors.Count == errsBefore;
+            string error = stepOk ? null : ctx.Errors[ctx.Errors.Count - 1];
+
+            // 출력 이미지
+            ICogImage outputImg = null;
+            ctx.Images.TryGetValue("image:" + stepIdx, out outputImg);
+
+            // 검사 결과 (VisionResult.FromContext 재활용)
+            var vr = VisionResult.FromContext(ctx, new List<IVisionStep> { step });
+
+            return new StepResult
+            {
+                IsSuccess    = stepOk,
+                Error        = error,
+                InputImage   = inputImg,
+                OutputImage  = outputImg,
+                CaliperEdges = vr.CaliperEdges,
+                Blobs        = vr.Blobs,
+                Distances    = vr.Distances,
+            };
+        }
+
+        /// <summary>
+        /// 현재 파이프라인에서 타입 T에 해당하는 스텝 전체를 순서대로 반환한다.
+        ///
+        /// 사용 예:
+        ///   var calipers = _controller.GetSteps&lt;CogCaliperStep&gt;();
+        ///   foreach (var c in calipers) { ... }
+        /// </summary>
+        /// <typeparam name="T">찾을 스텝 타입 (IVisionStep 구현체).</typeparam>
+        /// <returns>타입 T인 스텝 목록. 없으면 빈 목록.</returns>
+        public IReadOnlyList<T> GetSteps<T>() where T : class, IVisionStep
+        {
+            var result = new List<T>();
+            foreach (var step in Steps)
+            {
+                var typed = step as T;
+                if (typed != null) result.Add(typed);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// 현재 파이프라인에서 타입 T에 해당하는 N번째(0-based) 스텝을 반환한다.
+        ///
+        /// 사용 예:
+        ///   var caliper = _controller.GetStep&lt;CogCaliperStep&gt;(0); // 첫 번째 Caliper 스텝
+        ///   var result  = _controller.RunStep(caliper);
+        /// </summary>
+        /// <typeparam name="T">찾을 스텝 타입 (IVisionStep 구현체).</typeparam>
+        /// <param name="index">해당 타입 내 0-based 인덱스.</param>
+        /// <returns>찾은 스텝. 없으면 null.</returns>
+        public T GetStep<T>(int index) where T : class, IVisionStep
+        {
+            int count = 0;
+            foreach (var step in Steps)
+            {
+                var typed = step as T;
+                if (typed == null) continue;
+                if (count++ == index) return typed;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 하위 호환용. 지정한 타입의 N번째 스텝 입력 이미지를 반환한다.
+        /// 내부적으로 GetStepInputImage(IVisionStep)에 위임한다.
+        /// </summary>
         public ICogImage GetStepInputImage<T>(int index) where T : class, IVisionStep
         {
-            if (InputImage == null) return null;
-
-            // 대상 스텝 탐색
             int count = 0;
-            IVisionStep targetStep = null;
             foreach (var step in Steps)
             {
                 if (!(step is T)) continue;
                 if (count++ != index) continue;
-                targetStep = step;
-                break;
+                return GetStepInputImage(step);
             }
-            if (targetStep == null) return null;
+            return null;
+        }
 
-            var key = GetInputImageKey(targetStep);
+        // ── 내부 공통 실행 헬퍼 ─────────────────────────────────────────
 
-            // 원본 이미지 계열 → 실행 없이 즉시 반환
-            var direct = ResolveStaticInputImage(key);
-            if (direct != null) return direct;
-
-            // "image:N" → 의존성 체인만 추적하여 필요한 스텝만 실행
-            int refStepIdx;
-            if (!TryParseStepImageKey(key, out refStepIdx)) return null;
-
-            var context = new VisionContext { CogImage = InputImage };
-            context.RegisterImage("image:-1", InputImage);
+        private VisionContext BuildContext()
+        {
+            var ctx = new VisionContext { CogImage = InputImage };
+            ctx.RegisterImage("image:-1", InputImage);
             var colorSrc = InputImage as CogImage24PlanarColor;
-            if (colorSrc != null) context.OriginalColorImage = colorSrc;
+            if (colorSrc != null) ctx.OriginalColorImage = colorSrc;
+            return ctx;
+        }
 
-            // 필요한 스텝 인덱스만 수집 후 순서대로 실행
-            var required = new System.Collections.Generic.SortedSet<int>();
-            CollectRequiredSteps(refStepIdx, required);
-
+        private void ExecuteSteps(VisionContext ctx,
+            System.Collections.Generic.IEnumerable<int> stepIndices)
+        {
             var steps = Steps;
-            foreach (int i in required)
+            foreach (int i in stepIndices)
             {
-                context.CurrentStepIndex = i;
-                steps[i].Execute(context);
-                if (!context.IsSuccess && !steps[i].ContinueOnFailure) break;
+                ctx.CurrentStepIndex = i;
+                steps[i].Execute(ctx);
+                if (!ctx.IsSuccess && !steps[i].ContinueOnFailure) break;
             }
-
-            ICogImage result;
-            context.Images.TryGetValue(key, out result);
-            return result;
         }
 
         /// <summary>stepIdx 스텝의 출력을 생성하는 데 필요한 스텝 인덱스를 재귀적으로 수집한다.</summary>
-        private void CollectRequiredSteps(int stepIdx, System.Collections.Generic.SortedSet<int> required)
+        private void CollectRequiredSteps(int stepIdx,
+            System.Collections.Generic.SortedSet<int> required)
         {
             var steps = Steps;
             if (stepIdx < 0 || stepIdx >= steps.Count) return;
@@ -468,7 +593,6 @@ namespace Vision
 
             required.Add(stepIdx);
 
-            // 이 스텝의 InputImageKey가 다른 스텝 출력을 참조하면 재귀적으로 추적
             int depIdx;
             if (TryParseStepImageKey(GetInputImageKey(steps[stepIdx]), out depIdx))
                 CollectRequiredSteps(depIdx, required);

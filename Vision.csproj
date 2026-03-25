@@ -136,6 +136,7 @@
     <Compile Include="Steps\Cognex\CaliperDistanceResult.cs" />
     <Compile Include="Steps\Cognex\CogCaliperDistanceStep.cs" />
     <Compile Include="Results\VisionResult.cs" />
+    <Compile Include="Results\StepResult.cs" />
     <Compile Include="PipelineController.cs" />
     <Compile Include="GUI\IStepParamPanel.cs" />
     <Compile Include="GUI\ImageSourceEntry.cs" />
